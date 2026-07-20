@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dporter - Docker Port Forwarder</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f7fa;color:#1a1a2e;line-height:1.6}
+.header{background:#1a1a2e;color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:1.25rem;font-weight:600}
+.header .badge{background:#4a6cf7;padding:2px 10px;border-radius:12px;font-size:0.75rem}
+.container{max-width:1200px;margin:0 auto;padding:24px}
+.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px;overflow:hidden}
+.card-header{padding:16px 24px;border-bottom:1px solid #e8ecf1;font-size:1rem;font-weight:600;display:flex;align-items:center;justify-content:space-between}
+.card-body{padding:0}
+table{width:100%;border-collapse:collapse}
+th,td{padding:12px 24px;text-align:left;font-size:0.875rem}
+th{background:#f8fafc;font-weight:600;color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:.05em}
+tr:not(:last-child){border-bottom:1px solid #e8ecf1}
+td .state{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:500}
+.state-running{background:#ecfdf5;color:#059669}
+.state-stopped,.state-exited{background:#fef2f2;color:#dc2626}
+td .ip{font-family:'SF Mono',Monaco,monospace;font-size:0.8rem;color:#4a6cf7}
+td .port-tag{display:inline-block;background:#f1f5f9;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-family:'SF Mono',Monaco,monospace;margin:2px 4px 2px 0}
+td .port-tag.mapped{background:#ecfdf5;color:#059669}
+td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
+.btn{padding:6px 14px;border-radius:6px;font-size:0.8rem;font-weight:500;cursor:pointer;border:none;transition:all .15s}
+.btn-primary{background:#4a6cf7;color:#fff}
+.btn-primary:hover{background:#3651d5}
+.btn-danger{background:#fee2e2;color:#dc2626}
+.btn-danger:hover{background:#fecaca}
+.btn-sm{padding:4px 10px;font-size:0.75rem}
+.empty-state{padding:48px 24px;text-align:center;color:#94a3b8}
+.empty-state .icon{font-size:2.5rem;margin-bottom:12px}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal{background:#fff;border-radius:12px;width:420px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.15)}
+.modal-header{padding:20px 24px 0;font-size:1.1rem;font-weight:600}
+.modal-body{padding:20px 24px}
+.modal-footer{padding:0 24px 20px;display:flex;gap:8px;justify-content:flex-end}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:0.8rem;font-weight:500;color:#475569;margin-bottom:6px}
+.form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.875rem}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:#4a6cf7;box-shadow:0 0 0 3px rgba(74,108,247,.15)}
+.hint{font-size:0.75rem;color:#94a3b8;margin-top:4px}
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;font-size:0.875rem;color:#fff;z-index:200;animation:slideIn .3s ease}
+.toast-success{background:#059669}
+.toast-error{background:#dc2626}
+@keyframes slideIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.hidden{display:none}
+.loading{text-align:center;padding:40px;color:#94a3b8}
+.forwards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:16px 24px}
+.forward-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px}
+.forward-card .arrow{color:#4a6cf7;font-family:monospace;font-size:0.85rem}
+.forward-card .meta{font-size:0.75rem;color:#64748b;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="header"><h1>dporter</h1><span class="badge">Docker Port Forwarder</span></div>
+<div class="container">
+
+<div class="card" id="forwards-section">
+  <div class="card-header">
+    <span>Active Forwards</span>
+    <span id="forwards-count" style="font-size:0.8rem;color:#64748b">0</span>
+  </div>
+  <div class="card-body">
+    <div id="forwards-loading" class="loading">Loading&hellip;</div>
+    <div id="forwards-empty" class="empty-state hidden">
+      <div class="icon">&#128256;</div>
+      <p>No active port forwards</p>
+      <p style="font-size:0.8rem;margin-top:4px">Click &ldquo;Forward&rdquo; on a container below to start</p>
+    </div>
+    <div id="forwards-list" class="forwards-grid hidden"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span>Containers</span>
+    <button class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
+  </div>
+  <div class="card-body">
+    <div id="containers-loading" class="loading">Loading containers&hellip;</div>
+    <div id="containers-error" class="empty-state hidden">
+      <div class="icon">&#9888;&#65039;</div>
+      <p id="containers-error-msg"></p>
+    </div>
+    <div id="containers-empty" class="empty-state hidden">
+      <div class="icon">&#128230;</div>
+      <p>No containers found</p>
+      <p style="font-size:0.8rem;margin-top:4px">Start a Docker container to see it here</p>
+    </div>
+    <div id="containers-table" class="hidden">
+      <table>
+        <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>IPs</th><th>Ports</th><th></th></tr></thead>
+        <tbody id="containers-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="modal-overlay hidden" id="modal">
+  <div class="modal">
+    <div class="modal-header">Forward Port</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Container</label>
+        <input type="text" id="modal-container" readonly style="background:#f8fafc">
+      </div>
+      <div class="form-group">
+        <label>Container IP</label>
+        <input type="text" id="modal-ip" readonly style="background:#f8fafc">
+      </div>
+      <div class="form-group">
+        <label>Container Port</label>
+        <select id="modal-container-port" onchange="syncLocalPort()">
+          <option value="">-- Select port --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Local Port</label>
+        <input type="number" id="modal-local-port" min="1" max="65535" placeholder="Same as container port">
+        <span class="hint">Port on your local machine to bind</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()" style="background:#f1f5f9;color:#475569">Cancel</button>
+      <button class="btn btn-primary" onclick="createForward()">Start Forward</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
