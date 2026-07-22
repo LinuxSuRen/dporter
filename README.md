@@ -18,11 +18,28 @@ go build -o dporter .
 # 运行（默认监听 :8080）
 ./dporter
 
-# 自定义端口
+# 自定义端口（-p 参数）
+./dporter -p 9090
+
+# 或者通过环境变量
 PORT=9090 ./dporter
 ```
 
 打开浏览器访问 `http://localhost:8080`。
+
+### 连接远程 Docker
+
+如果本地没有 Docker，可以让 dporter 连接远程实例：
+
+```bash
+# 在远程 Docker 主机上运行
+./dporter -p 8080
+
+# 在本地运行（仅提供 Web UI，API 请求转发到远程）
+./dporter -api http://remote-host:8080
+```
+
+这样本地浏览器打开 `http://localhost:8080`，所有 API 请求自动转发到远程主机。
 
 ## API
 
