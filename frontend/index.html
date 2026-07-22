@@ -14,11 +14,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .gh-link{color:#64748b;display:flex;align-items:center;transition:color .15s}
 .gh-link:hover{color:#fff}
 .gh-link svg{width:20px;height:20px;fill:currentColor}
-.container{max-width:1200px;margin:0 auto;padding:24px}
-.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px;overflow:hidden}
+.container{margin:0 auto;padding:24px}
+.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px}
 .card-header{padding:16px 24px;border-bottom:1px solid #e8ecf1;font-size:1rem;font-weight:600;display:flex;align-items:center;justify-content:space-between}
 .card-body{padding:0}
-table{width:100%;border-collapse:collapse}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+.col-image{word-break:break-all}
+.col-action{width:80px}
 th,td{padding:12px 24px;text-align:left;font-size:0.875rem}
 th{background:#f8fafc;font-weight:600;color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:.05em}
 tr:not(:last-child){border-bottom:1px solid #e8ecf1}
@@ -53,6 +55,9 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 @keyframes slideIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
 .hidden{display:none}
 .loading{text-align:center;padding:40px;color:#94a3b8}
+.search-input{padding:6px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.8rem;width:200px;outline:none}
+.search-input:focus{border-color:#4a6cf7;box-shadow:0 0 0 3px rgba(74,108,247,.15)}
+.table-wrap{overflow-x:auto}
 .forwards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:16px 24px}
 .forward-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px}
 .forward-card .arrow{color:#4a6cf7;font-family:monospace;font-size:0.85rem}
@@ -87,7 +92,10 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 <div class="card">
   <div class="card-header">
     <span>Containers</span>
-    <button class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="renderContainers()">
+      <button type="button" class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
+    </div>
   </div>
   <div class="card-body">
     <div id="containers-loading" class="loading">Loading containers&hellip;</div>
@@ -101,10 +109,12 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
       <p style="font-size:0.8rem;margin-top:4px">Start a Docker container to see it here</p>
     </div>
     <div id="containers-table" class="hidden">
+      <div class="table-wrap">
       <table>
-        <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>IPs</th><th>Ports</th><th></th></tr></thead>
+        <thead><tr><th style="width:24%">Name</th><th style="width:22%">Image</th><th style="width:10%">Status</th><th style="width:18%">IPs</th><th style="width:18%">Ports</th><th class="col-action"></th></tr></thead>
         <tbody id="containers-tbody"></tbody>
       </table>
+      </div>
     </div>
   </div>
 </div>
@@ -136,8 +146,8 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal()" style="background:#f1f5f9;color:#475569">Cancel</button>
-      <button class="btn btn-primary" onclick="createForward()">Start Forward</button>
+      <button type="button" class="btn" onclick="closeModal()" style="background:#f1f5f9;color:#475569">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="createForward()">Start Forward</button>
     </div>
   </div>
 </div>

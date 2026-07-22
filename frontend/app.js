@@ -49,13 +49,27 @@ async function refreshContainers() {
     showEl('containers-empty');
     return;
   }
+  document.getElementById('containers-search').value = '';
   renderContainers();
   showEl('containers-table');
 }
 
 function renderContainers() {
+  const search = (document.getElementById('containers-search').value || '').toLowerCase();
+  const filtered = state.containers.filter(c => {
+    if (!search) return true;
+    return c.name.toLowerCase().includes(search)
+      || c.id.toLowerCase().includes(search)
+      || c.image.toLowerCase().includes(search);
+  });
+
   const tbody = document.getElementById('containers-tbody');
-  tbody.innerHTML = state.containers.map((c, idx) => {
+  if (filtered.length === 0 && search) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:32px">No containers matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map((c) => {
+    const realIdx = state.containers.indexOf(c);
     const stateClass = c.state === 'running' ? 'running' : 'stopped';
 
     const ips = Object.entries(c.networkIps || {})
@@ -71,12 +85,12 @@ function renderContainers() {
     }).join('') || '<span style="color:#94a3b8">&mdash;</span>';
 
     const forwardBtn = c.state === 'running'
-      ? `<button class="btn btn-primary btn-sm" data-action="forward" data-idx="${idx}">Forward</button>`
+      ? `<button type="button" class="btn btn-primary btn-sm" data-action="forward" data-idx="${realIdx}">Forward</button>`
       : '';
 
     return `<tr>
       <td><strong>${escapeHtml(c.name)}</strong><br><span style="font-size:0.7rem;color:#94a3b8">${escapeHtml(c.id)}</span></td>
-      <td>${escapeHtml(c.image)}</td>
+      <td><div class="col-image" title="${escapeHtml(c.image)}">${escapeHtml(c.image)}</div></td>
       <td><span class="state state-${stateClass}">${escapeHtml(c.state)}</span></td>
       <td>${ips}</td>
       <td>${ports}</td>
@@ -178,7 +192,7 @@ function renderForwards() {
       <div class="meta">
         IP: ${escapeHtml(f.containerIP)} | ID: ${escapeHtml(f.id)}
       </div>
-      <button class="btn btn-danger" style="margin-top:8px;width:100%" data-action="stop-forward" data-id="${escapeHtml(f.id)}">Stop</button>
+      <button type="button" class="btn btn-danger" style="margin-top:8px;width:100%" data-action="stop-forward" data-id="${escapeHtml(f.id)}">Stop</button>
     </div>
   `).join('');
 }
@@ -187,6 +201,14 @@ async function stopForward(id) {
   try {
     await api(`/api/forwards/${encodeURIComponent(id)}`, { method: 'DELETE' });
     showToast('Forward stopped');
+    state.forwards = state.forwards.filter(f => f.id !== id);
+    if (!state.forwards.length) {
+      hideEl('forwards-list');
+      showEl('forwards-empty');
+    } else {
+      renderForwards();
+    }
+    document.getElementById('forwards-count').textContent = state.forwards.length;
     refreshForwards();
   } catch (err) {
     showToast(`Failed: ${err.message}`, 'error');
