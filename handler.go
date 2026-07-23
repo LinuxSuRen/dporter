@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os/exec"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -327,6 +328,44 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
+	project := r.URL.Query().Get("project")
+	if project == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing project name"})
+		return
+	}
+
+	containers, err := listContainers()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var configFile, workingDir string
+	for _, c := range containers {
+		if c.ComposeProject == project && c.ComposeConfigFiles != "" {
+			configFile = c.ComposeConfigFiles
+			workingDir = c.ComposeWorkingDir
+			break
+		}
+	}
+	if configFile == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no compose config found for " + project})
+		return
+	}
+
+	cmd := exec.Command("docker", "compose", "-f", configFile, "restart")
+	if workingDir != "" {
+		cmd.Dir = workingDir
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error(), "output": string(output)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"output": string(output)})
+}
+
 func (s *Server) handleBatchRestart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IDs []string `json:"ids"`
@@ -391,20 +430,24 @@ func (s *Server) handleComposePull(w http.ResponseWriter, r *http.Request) {
 	transport, _ := newDockerTransport()
 	pullClient := &http.Client{Transport: transport}
 
-	for _, c := range targets {
+	for i, c := range targets {
 		imageRef := c.Image
 		if strings.HasPrefix(imageRef, "sha256:") {
 			if resolved := resolveImageTag(pullClient, imageRef); resolved != "" {
 				imageRef = resolved
 			}
 		}
-		fmt.Fprintf(w, "data: {\"status\":\"Pulling %s: %s\"}\n\n", c.Name, imageRef)
+		fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"total\":%d,\"name\":\"%s\",\"image\":\"%s\",\"status\":\"pulling\"}\n\n", i, len(targets), c.Name, imageRef)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		if err := dockerPullImage(pullClient, imageRef, w); err != nil {
-			fmt.Fprintf(w, "event: pull-error\ndata: %s: %s\n\n", c.Name, err.Error())
-			continue
+		if err := dockerPullImage(pullClient, imageRef, nil); err != nil {
+			fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"error\",\"error\":\"%s\"}\n\n", i, c.Name, err.Error())
+		} else {
+			fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"done\"}\n\n", i, c.Name)
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
 		}
 	}
 

@@ -528,14 +528,12 @@ function filterByCompose(project) {
 }
 
 async function composeRestartAll() {
-  const ids = state.containers
-    .filter(c => state.composeFilter.includes(c.composeProject || '') && c.state === 'running')
-    .map(c => c.id);
-  if (!ids.length) { showToast('No running containers to restart', 'error'); return; }
-  if (!confirm(`Restart ${ids.length} container(s)?`)) return;
+  const project = state.composeFilter[0];
+  if (!project) return;
+  if (!confirm(`Restart all containers in "${project}"?`)) return;
   try {
-    await api('/api/containers/batch/restart', { method: 'POST', body: JSON.stringify({ ids }) });
-    showToast(`Restarting ${ids.length} containers...`);
+    const res = await api(`/api/compose/restart?project=${encodeURIComponent(project)}`, { method: 'POST' });
+    showToast(res.output || 'Restarting...');
     setTimeout(refreshContainers, 2000);
   } catch (err) {
     showToast(`Failed: ${err.message}`, 'error');
@@ -545,10 +543,65 @@ async function composeRestartAll() {
 function composePullAll() {
   const project = state.composeFilter[0];
   if (!project) return;
-  startPullStream(
-    `/api/compose/pull?project=${encodeURIComponent(project)}`,
-    `Pull: ${project} (all)`
-  );
+
+  closePull();
+  document.getElementById('pull-title').textContent = `Pull: ${project} (all)`;
+  document.getElementById('pull-status').textContent = 'Connecting...';
+  document.getElementById('pull-layers').innerHTML = '';
+  document.getElementById('pull-modal').classList.remove('hidden');
+
+  const url = `/api/compose/pull?project=${encodeURIComponent(project)}`;
+  pullEventSource = new EventSource(url);
+
+  const containers = {};
+
+  pullEventSource.addEventListener('pull-error', (e) => {
+    document.getElementById('pull-status').textContent = `Error: ${e.data || 'failed'}`;
+    pullEventSource.close();
+  });
+
+  pullEventSource.addEventListener('done', () => {
+    document.getElementById('pull-status').textContent = `Pull complete for ${project}`;
+    showToast(`Pulled all images for ${project}`);
+    pullEventSource.close();
+  });
+
+  pullEventSource.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'container') {
+        containers[msg.idx] = msg;
+        renderComposePullList(containers);
+        if (msg.status === 'pulling') {
+          document.getElementById('pull-status').textContent = `Pulling ${msg.name}: ${msg.image}`;
+        }
+      }
+    } catch (_) {}
+  };
+
+  pullEventSource.onerror = () => {
+    if (pullEventSource.readyState === EventSource.CLOSED) {
+      document.getElementById('pull-status').textContent = 'Disconnected';
+    }
+  };
+}
+
+function renderComposePullList(containers) {
+  const el = document.getElementById('pull-layers');
+  el.innerHTML = Object.values(containers).map(c => {
+    let icon, cls;
+    switch (c.status) {
+      case 'pulling': icon = '⬇'; cls = 'color:#4a6cf7'; break;
+      case 'done': icon = '✓'; cls = 'color:#059669'; break;
+      case 'error': icon = '✗'; cls = 'color:#dc2626'; break;
+      default: icon = '⏳'; cls = 'color:#94a3b8'; break;
+    }
+    return `<div class="pull-layer">
+      <span style="${cls};width:16px;flex-shrink:0">${icon}</span>
+      <span style="flex:1;font-family:monospace;font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.name)}</span>
+      <span style="color:#94a3b8;font-size:0.7rem;flex-shrink:0">${escapeHtml(c.image ? c.image.substring(0, 40) : '')}</span>
+    </div>`;
+  }).join('');
 }
 
 function escapeHtml(str) {
