@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os/exec"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -341,29 +340,38 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var configFile, workingDir string
+	var targets []string
 	for _, c := range containers {
-		if c.ComposeProject == project && c.ComposeConfigFiles != "" {
-			configFile = c.ComposeConfigFiles
-			workingDir = c.ComposeWorkingDir
-			break
+		if c.ComposeProject == project && c.State == "running" {
+			targets = append(targets, c.ID)
 		}
 	}
-	if configFile == "" {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no compose config found for " + project})
+	if len(targets) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no running containers in project " + project})
 		return
 	}
 
-	cmd := exec.Command("docker", "compose", "-f", configFile, "restart")
-	if workingDir != "" {
-		cmd.Dir = workingDir
-	}
-	output, err := cmd.CombinedOutput()
+	httpClient, _, err := newDockerClient()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error(), "output": string(output)})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"output": string(output)})
+
+	var failed []string
+	for _, id := range targets {
+		if err := dockerPost(httpClient, "containers/"+id+"/restart"); err != nil {
+			failed = append(failed, id)
+		}
+	}
+
+	if len(failed) > 0 {
+		writeJSON(w, http.StatusPartialContent, map[string]interface{}{
+			"restarted": len(targets) - len(failed),
+			"failed":    failed,
+		})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleBatchRestart(w http.ResponseWriter, r *http.Request) {
