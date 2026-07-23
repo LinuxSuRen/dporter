@@ -404,16 +404,14 @@ async function startContainer(containerId, containerName) {
 
 let pullEventSource = null;
 
-function openPull(containerId, containerName, image) {
+function startPullStream(url, title) {
   closePull();
-  document.getElementById('pull-title').textContent = `Pull: ${image}`;
+  document.getElementById('pull-title').textContent = title;
   document.getElementById('pull-status').textContent = 'Connecting...';
   document.getElementById('pull-layers').innerHTML = '';
   document.getElementById('pull-modal').classList.remove('hidden');
 
-  const url = `/api/containers/${encodeURIComponent(containerId)}/pull?image=${encodeURIComponent(image)}`;
   pullEventSource = new EventSource(url);
-
   const layers = {};
 
   pullEventSource.addEventListener('pull-error', (e) => {
@@ -424,8 +422,7 @@ function openPull(containerId, containerName, image) {
   pullEventSource.addEventListener('done', () => {
     Object.values(layers).forEach(l => { l.current = 1; l.total = 1; });
     renderPullLayers(layers);
-    document.getElementById('pull-status').textContent = `Pull complete for ${containerName}`;
-    showToast(`Pulled latest for ${containerName}`);
+    document.getElementById('pull-status').textContent = 'Pull complete';
     pullEventSource.close();
   });
 
@@ -438,8 +435,8 @@ function openPull(containerId, containerName, image) {
       }
       if (msg.status) {
         document.getElementById('pull-status').textContent = msg.status;
-        if (msg.status.startsWith('Resolved: ')) {
-          document.getElementById('pull-title').textContent = `Pull: ${msg.status.slice(10)}`;
+        if (msg.status.startsWith('Resolved: ') || msg.status.startsWith('Pulling ')) {
+          document.getElementById('pull-title').textContent = `Pull: ${msg.status.replace(/^Resolved:\s*/, '').replace(/^Pulling\s+\S+:\s*/, '')}`;
         }
       }
       if (msg.id) {
@@ -464,6 +461,13 @@ function openPull(containerId, containerName, image) {
       document.getElementById('pull-status').textContent = 'Disconnected';
     }
   };
+}
+
+function openPull(containerId, containerName, image) {
+  startPullStream(
+    `/api/containers/${encodeURIComponent(containerId)}/pull?image=${encodeURIComponent(image)}`,
+    `Pull: ${image}`
+  );
 }
 
 function renderPullLayers(layers) {
@@ -541,32 +545,10 @@ async function composeRestartAll() {
 function composePullAll() {
   const project = state.composeFilter[0];
   if (!project) return;
-  document.getElementById('pull-title').textContent = `Pull: ${project} (all)`;
-  document.getElementById('pull-status').textContent = 'Connecting...';
-  document.getElementById('pull-layers').innerHTML = '';
-  document.getElementById('pull-modal').classList.remove('hidden');
-
-  closePull();
-  const url = `/api/compose/pull?project=${encodeURIComponent(project)}`;
-  pullEventSource = new EventSource(url);
-
-  pullEventSource.addEventListener('pull-error', (e) => {
-    document.getElementById('pull-status').textContent = `Error: ${e.data || 'failed'}`;
-    pullEventSource.close();
-  });
-
-  pullEventSource.addEventListener('done', () => {
-    document.getElementById('pull-status').textContent = `Pull complete for ${project}`;
-    showToast(`Pulled all images for ${project}`);
-    pullEventSource.close();
-  });
-
-  pullEventSource.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.status) document.getElementById('pull-status').textContent = msg.status;
-    } catch (_) {}
-  };
+  startPullStream(
+    `/api/compose/pull?project=${encodeURIComponent(project)}`,
+    `Pull: ${project} (all)`
+  );
 }
 
 function escapeHtml(str) {
