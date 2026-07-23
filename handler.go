@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -340,38 +342,84 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var targets []string
+	var configFile, workingDir string
 	for _, c := range containers {
-		if c.ComposeProject == project && c.State == "running" {
-			targets = append(targets, c.ID)
+		if c.ComposeProject == project && c.ComposeConfigFiles != "" {
+			configFile = c.ComposeConfigFiles
+			workingDir = c.ComposeWorkingDir
+			break
 		}
 	}
-	if len(targets) == 0 {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no running containers in project " + project})
+	if configFile == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no compose config found for " + project})
 		return
 	}
 
-	httpClient, _, err := newDockerClient()
+	cmd := exec.Command("docker", "compose", "-f", configFile, "down")
+	if workingDir != "" {
+		cmd.Dir = workingDir
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "down failed", "output": string(out), "detail": err.Error()})
+		return
+	}
+
+	profiles := detectProfiles(configFile)
+	args := []string{"compose", "-f", configFile}
+	for _, p := range profiles {
+		args = append(args, "--profile", p)
+	}
+	args = append(args, "up", "-d")
+
+	cmd = exec.Command("docker", args...)
+	if workingDir != "" {
+		cmd.Dir = workingDir
+	}
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "up failed", "output": string(output), "detail": err.Error()})
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]string{"output": string(output)})
+}
 
-	var failed []string
-	for _, id := range targets {
-		if err := dockerPost(httpClient, "containers/"+id+"/restart"); err != nil {
-			failed = append(failed, id)
+func detectProfiles(configFile string) []string {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	lines := strings.Split(string(data), "\n")
+	inProfiles := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "profiles:") {
+			inProfiles = true
+			continue
 		}
+		if inProfiles && strings.HasPrefix(trimmed, "- ") {
+			val := strings.TrimSpace(trimmed[2:])
+			val = strings.Trim(val, "\"'")
+			if val != "" {
+				seen[val] = true
+			}
+			continue
+		}
+		if inProfiles && strings.HasPrefix(trimmed, "-") && trimmed != "-" {
+			val := strings.TrimSpace(trimmed[1:])
+			val = strings.Trim(val, "\"'")
+			if val != "" {
+				seen[val] = true
+			}
+			continue
+		}
+		inProfiles = false
 	}
-
-	if len(failed) > 0 {
-		writeJSON(w, http.StatusPartialContent, map[string]interface{}{
-			"restarted": len(targets) - len(failed),
-			"failed":    failed,
-		})
-		return
+	var result []string
+	for p := range seen {
+		result = append(result, p)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return result
 }
 
 func (s *Server) handleBatchRestart(w http.ResponseWriter, r *http.Request) {
