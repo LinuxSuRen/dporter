@@ -503,6 +503,8 @@ function renderComposeTags(filteredCount) {
   }).join('');
   if (state.composeFilter.length) {
     el.innerHTML += `<span class="compose-tag clear" onclick="filterByCompose(null)">&times; clear</span>`;
+    el.innerHTML += `<span class="compose-action" onclick="composeRestartAll()" title="Restart all containers">&#8635; Restart</span>`;
+    el.innerHTML += `<span class="compose-action" onclick="composePullAll()" title="Pull all images">&#8681; Pull</span>`;
   }
 }
 
@@ -519,6 +521,52 @@ function filterByCompose(project) {
   }
   localStorage.setItem('composeFilter', JSON.stringify(state.composeFilter));
   renderContainers();
+}
+
+async function composeRestartAll() {
+  const ids = state.containers
+    .filter(c => state.composeFilter.includes(c.composeProject || '') && c.state === 'running')
+    .map(c => c.id);
+  if (!ids.length) { showToast('No running containers to restart', 'error'); return; }
+  if (!confirm(`Restart ${ids.length} container(s)?`)) return;
+  try {
+    await api('/api/containers/batch/restart', { method: 'POST', body: JSON.stringify({ ids }) });
+    showToast(`Restarting ${ids.length} containers...`);
+    setTimeout(refreshContainers, 2000);
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+}
+
+function composePullAll() {
+  const project = state.composeFilter[0];
+  if (!project) return;
+  document.getElementById('pull-title').textContent = `Pull: ${project} (all)`;
+  document.getElementById('pull-status').textContent = 'Connecting...';
+  document.getElementById('pull-layers').innerHTML = '';
+  document.getElementById('pull-modal').classList.remove('hidden');
+
+  closePull();
+  const url = `/api/compose/pull?project=${encodeURIComponent(project)}`;
+  pullEventSource = new EventSource(url);
+
+  pullEventSource.addEventListener('pull-error', (e) => {
+    document.getElementById('pull-status').textContent = `Error: ${e.data || 'failed'}`;
+    pullEventSource.close();
+  });
+
+  pullEventSource.addEventListener('done', () => {
+    document.getElementById('pull-status').textContent = `Pull complete for ${project}`;
+    showToast(`Pulled all images for ${project}`);
+    pullEventSource.close();
+  });
+
+  pullEventSource.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.status) document.getElementById('pull-status').textContent = msg.status;
+    } catch (_) {}
+  };
 }
 
 function escapeHtml(str) {

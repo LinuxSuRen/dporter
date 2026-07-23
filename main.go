@@ -60,6 +60,8 @@ func main() {
 		fm = NewForwardManager()
 		srv := &Server{fm: fm}
 		mux.HandleFunc("GET /api/version", srv.handleVersion)
+		mux.HandleFunc("POST /api/containers/batch/restart", srv.handleBatchRestart)
+		mux.HandleFunc("GET /api/compose/pull", srv.handleComposePull)
 		mux.HandleFunc("GET /api/images/info", srv.handleImageInfo)
 		mux.HandleFunc("GET /api/containers", srv.handleContainers)
 		mux.HandleFunc("GET /api/containers/{id}/logs", srv.handleContainerLogs)

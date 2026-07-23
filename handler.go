@@ -327,10 +327,88 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+func (s *Server) handleBatchRestart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var failed []string
+	for _, id := range req.IDs {
+		if err := dockerPost(httpClient, "containers/"+id+"/restart"); err != nil {
+			failed = append(failed, id)
+		}
+	}
+
+	if len(failed) > 0 {
+		writeJSON(w, http.StatusPartialContent, map[string]interface{}{
+			"restarted": len(req.IDs) - len(failed),
+			"failed":    failed,
+		})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleComposePull(w http.ResponseWriter, r *http.Request) {
+	project := r.URL.Query().Get("project")
+	if project == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing project name"})
+		return
+	}
+
+	containers, err := listContainers()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var targets []ContainerInfo
+	for _, c := range containers {
+		if c.ComposeProject == project && c.State == "running" {
+			targets = append(targets, c)
+		}
+	}
+
+	if len(targets) == 0 {
+		fmt.Fprintf(w, "event: pull-error\ndata: no running containers in project %s\n\n", project)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	transport, _ := newDockerTransport()
+	pullClient := &http.Client{Transport: transport}
+
+	for _, c := range targets {
+		imageRef := c.Image
+		if strings.HasPrefix(imageRef, "sha256:") {
+			if resolved := resolveImageTag(pullClient, imageRef); resolved != "" {
+				imageRef = resolved
+			}
+		}
+		fmt.Fprintf(w, "data: {\"status\":\"Pulling %s: %s\"}\n\n", c.Name, imageRef)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		if err := dockerPullImage(pullClient, imageRef, w); err != nil {
+			fmt.Fprintf(w, "event: pull-error\ndata: %s: %s\n\n", c.Name, err.Error())
+			continue
+		}
+	}
+
+	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 }
 
 func (s *Server) handleImageInfo(w http.ResponseWriter, r *http.Request) {
@@ -359,4 +437,10 @@ func (s *Server) handleImageInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, img)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
 }
