@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 	"sync"
+
+	"github.com/gorilla/websocket"
 )
 
 type ForwardInfo struct {
@@ -25,14 +27,41 @@ type forward struct {
 }
 
 type ForwardManager struct {
-	mu       sync.Mutex
-	forwards map[string]*forward
-	nextID   int
+	mu        sync.Mutex
+	forwards  map[string]*forward
+	nextID    int
+	wsClients map[*websocket.Conn]struct{}
+	wsMu      sync.Mutex
 }
 
 func NewForwardManager() *ForwardManager {
 	return &ForwardManager{
-		forwards: make(map[string]*forward),
+		forwards:  make(map[string]*forward),
+		wsClients: make(map[*websocket.Conn]struct{}),
+	}
+}
+
+func (fm *ForwardManager) Subscribe(conn *websocket.Conn) {
+	fm.wsMu.Lock()
+	fm.wsClients[conn] = struct{}{}
+	fm.wsMu.Unlock()
+	conn.WriteJSON(fm.List())
+}
+
+func (fm *ForwardManager) Unsubscribe(conn *websocket.Conn) {
+	fm.wsMu.Lock()
+	delete(fm.wsClients, conn)
+	fm.wsMu.Unlock()
+}
+
+func (fm *ForwardManager) broadcast() {
+	list := fm.List()
+	fm.wsMu.Lock()
+	defer fm.wsMu.Unlock()
+	for conn := range fm.wsClients {
+		if err := conn.WriteJSON(list); err != nil {
+			delete(fm.wsClients, conn)
+		}
 	}
 }
 
@@ -56,6 +85,7 @@ func (fm *ForwardManager) Start(info ForwardInfo) (string, error) {
 	log.Printf("forward: localhost:%d -> %s:%d (%s)", info.LocalPort, info.ContainerIP, info.ContainerPort, info.ContainerName)
 
 	go fm.acceptLoop(f)
+	fm.broadcast()
 	return info.ID, nil
 }
 
@@ -74,6 +104,7 @@ func (fm *ForwardManager) Stop(id string) {
 	close(f.cancel)
 	f.listener.Close()
 	log.Printf("forward stopped: %s", id)
+	fm.broadcast()
 }
 
 func (fm *ForwardManager) StopAll() {

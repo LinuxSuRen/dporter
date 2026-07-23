@@ -9,3 +9,4 @@ dporter
 
 # OS
 .DS_Store
+.sisyphus/

@@ -2,6 +2,8 @@ const state = {
   containers: [],
   forwards: [],
   modalTarget: null,
+  showAll: false,
+  composeFilter: [],
 };
 
 async function api(path, opts = {}) {
@@ -49,7 +51,6 @@ async function refreshContainers() {
     showEl('containers-empty');
     return;
   }
-  document.getElementById('containers-search').value = '';
   renderContainers();
   showEl('containers-table');
 }
@@ -57,11 +58,15 @@ async function refreshContainers() {
 function renderContainers() {
   const search = (document.getElementById('containers-search').value || '').toLowerCase();
   const filtered = state.containers.filter(c => {
+    if (!state.showAll && c.state !== 'running') return false;
+    if (state.composeFilter.length && !state.composeFilter.includes(c.composeProject || '')) return false;
     if (!search) return true;
     return c.name.toLowerCase().includes(search)
       || c.id.toLowerCase().includes(search)
       || c.image.toLowerCase().includes(search);
   });
+
+  renderComposeTags(filtered.length);
 
   const tbody = document.getElementById('containers-tbody');
   if (filtered.length === 0 && search) {
@@ -77,24 +82,53 @@ function renderContainers() {
       .join('') || '<span style="color:#94a3b8">&mdash;</span>';
 
     const ports = (c.ports || []).map(p => {
-      const label = p.hostPort
-        ? `${p.hostPort}\u2192${p.port}/${p.protocol}`
-        : `${p.port}/${p.protocol}`;
-      const cls = p.hostPort ? 'mapped' : 'unmapped';
-      return `<span class="port-tag ${cls}">${escapeHtml(label)}</span>`;
+      if (p.hostPort) {
+        const url = `http://${location.hostname}:${p.hostPort}`;
+        const label = `${p.hostPort}:${p.port}/${p.protocol}`;
+        return `<a href="${url}" target="_blank" rel="noopener" class="port-link" title="Open ${url}">${escapeHtml(label)}</a>`;
+      }
+      return `<span class="port-tag unmapped">${escapeHtml(`${p.port}/${p.protocol}`)}</span>`;
     }).join('') || '<span style="color:#94a3b8">&mdash;</span>';
 
     const forwardBtn = c.state === 'running'
       ? `<button type="button" class="btn btn-primary btn-sm" data-action="forward" data-idx="${realIdx}">Forward</button>`
       : '';
 
+    const moreItems = [
+      `<button type="button" class="btn-icon" data-action="inspect" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">Inspect</button>`,
+      `<button type="button" class="btn-icon" data-action="pull" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" data-image="${escapeHtml(c.image)}">Pull Image</button>`,
+    ];
+    if (c.state === 'running') {
+      moreItems.push(
+        `<button type="button" class="btn-icon" data-action="logs" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">Logs</button>`,
+        `<button type="button" class="btn-icon" data-action="restart" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" style="color:#d97706">Restart</button>`,
+        `<button type="button" class="btn-icon" data-action="stop-container" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" style="color:#dc2626">Stop</button>`,
+      );
+    } else {
+      moreItems.push(
+        `<button type="button" class="btn-icon" data-action="start-container" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" style="color:#059669">Start</button>`,
+      );
+    }
+    const moreMenu = `
+      <span style="position:relative">
+        <button type="button" class="btn-more" data-action="toggle-menu" data-idx="${realIdx}">&hellip;</button>
+        <div class="action-dropdown hidden" data-menu-idx="${realIdx}">
+          ${moreItems.join('')}
+        </div>
+      </span>
+    `;
+
+    const composeBadge = c.composeProject
+      ? `<span class="compose-badge" title="${escapeHtml(c.composeConfigFiles || '')}">${escapeHtml(c.composeProject)}</span>`
+      : '';
+
     return `<tr>
-      <td><strong>${escapeHtml(c.name)}</strong><br><span style="font-size:0.7rem;color:#94a3b8">${escapeHtml(c.id)}</span></td>
-      <td><div class="col-image" title="${escapeHtml(c.image)}">${escapeHtml(c.image)}</div></td>
+      <td><strong>${escapeHtml(c.name)}</strong>${composeBadge}<br><span style="font-size:0.7rem;color:#94a3b8">${escapeHtml(c.id)}</span></td>
+      <td><a href="#" class="image-link" data-action="image-info" data-image="${escapeHtml(c.image)}" title="Click for details">${escapeHtml(c.image)}</a></td>
       <td><span class="state state-${stateClass}">${escapeHtml(c.state)}</span></td>
       <td>${ips}</td>
       <td>${ports}</td>
-      <td>${forwardBtn}</td>
+      <td><div class="action-btns">${forwardBtn}${moreMenu}</div></td>
     </tr>`;
   }).join('');
 }
@@ -154,8 +188,7 @@ async function createForward() {
       }),
     });
     closeModal();
-    showToast(`Forward: localhost:${localPort} \u2192 ${c.name}:${containerPort}`);
-    refreshForwards();
+    showToast(`Forward: localhost:${localPort} → ${c.name}:${containerPort}`);
   } catch (err) {
     showToast(`Failed: ${err.message}`, 'error');
   }
@@ -167,7 +200,10 @@ async function refreshForwards() {
   } catch (_) {
     return;
   }
+  renderForwardsUI();
+}
 
+function renderForwardsUI() {
   hideEl('forwards-loading');
   if (!state.forwards.length) {
     showEl('forwards-empty');
@@ -178,15 +214,31 @@ async function refreshForwards() {
     renderForwards();
   }
   document.getElementById('forwards-count').textContent = state.forwards.length;
+  autoCollapseForwards();
+}
+
+function autoCollapseForwards() {
+  const sec = document.getElementById('forwards-section');
+  if (state.forwards.length === 0) {
+    sec.classList.add('card-collapsed');
+  } else {
+    sec.classList.remove('card-collapsed');
+  }
+}
+
+function toggleForwards() {
+  document.getElementById('forwards-section').classList.toggle('card-collapsed');
 }
 
 function renderForwards() {
   const list = document.getElementById('forwards-list');
-  list.innerHTML = state.forwards.map(f => `
+  list.innerHTML = state.forwards.map(f => {
+    const url = `http://${location.hostname}:${f.localPort}`;
+    return `
     <div class="forward-card">
       <div>
-        <span style="font-weight:600;font-family:monospace">localhost:${f.localPort}</span>
-        <span class="arrow"> \u2192 </span>
+        <a href="${url}" target="_blank" rel="noopener" style="font-weight:600;font-family:monospace;color:#4a6cf7;text-decoration:none" title="Open ${url}">localhost:${f.localPort}</a>
+        <span class="arrow"> → </span>
         <span style="font-weight:600">${escapeHtml(f.containerName)}:${f.containerPort}</span>
       </div>
       <div class="meta">
@@ -194,25 +246,279 @@ function renderForwards() {
       </div>
       <button type="button" class="btn btn-danger" style="margin-top:8px;width:100%" data-action="stop-forward" data-id="${escapeHtml(f.id)}">Stop</button>
     </div>
-  `).join('');
+  `}).join('');
 }
 
 async function stopForward(id) {
   try {
     await api(`/api/forwards/${encodeURIComponent(id)}`, { method: 'DELETE' });
     showToast('Forward stopped');
-    state.forwards = state.forwards.filter(f => f.id !== id);
-    if (!state.forwards.length) {
-      hideEl('forwards-list');
-      showEl('forwards-empty');
-    } else {
-      renderForwards();
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+}
+
+let logsWs = null;
+let logsPaused = false;
+
+function openLogs(containerId, containerName) {
+  closeLogs();
+
+  document.getElementById('logs-title').textContent = `Logs: ${containerName}`;
+  document.getElementById('logs-pause').textContent = 'Pause';
+  document.getElementById('logs-pause').classList.remove('active');
+  logsPaused = false;
+
+  const output = document.getElementById('logs-output');
+  output.innerHTML = '<div class="logs-placeholder">Connecting...</div>';
+
+  document.getElementById('logs-drawer').classList.add('open');
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/api/containers/${encodeURIComponent(containerId)}/logs`;
+
+  logsWs = new WebSocket(url);
+
+  logsWs.onopen = () => {
+    output.innerHTML = '';
+  };
+
+  logsWs.onmessage = (e) => {
+    if (logsPaused) return;
+    const line = document.createElement('div');
+    line.textContent = e.data;
+    output.appendChild(line);
+    output.scrollTop = output.scrollHeight;
+  };
+
+  logsWs.onerror = () => {
+    output.innerHTML = '<div class="logs-placeholder" style="color:#f85149">Connection error</div>';
+  };
+
+  logsWs.onclose = () => {
+    if (output.children.length === 0 || output.querySelector('.logs-placeholder')) {
+      output.innerHTML = '<div class="logs-placeholder">Disconnected</div>';
     }
-    document.getElementById('forwards-count').textContent = state.forwards.length;
+  };
+}
+
+function closeLogs() {
+  if (logsWs) {
+    logsWs.close();
+    logsWs = null;
+  }
+  document.getElementById('logs-drawer').classList.remove('open');
+}
+
+function toggleLogPause() {
+  logsPaused = !logsPaused;
+  const btn = document.getElementById('logs-pause');
+  if (logsPaused) {
+    btn.textContent = 'Resume';
+    btn.classList.add('active');
+  } else {
+    btn.textContent = 'Pause';
+    btn.classList.remove('active');
+  }
+}
+
+function clearLogs() {
+  document.getElementById('logs-output').innerHTML = '';
+}
+
+async function openInspect(containerId, containerName) {
+  document.getElementById('inspect-content').classList.add('hidden');
+  document.getElementById('inspect-loading').classList.remove('hidden');
+  document.getElementById('inspect-modal').classList.remove('hidden');
+
+  try {
+    const data = await api(`/api/containers/${encodeURIComponent(containerId)}/inspect`);
+    const el = document.getElementById('inspect-content');
+    el.textContent = JSON.stringify(data, null, 2);
+    el.classList.remove('hidden');
+    document.getElementById('inspect-loading').classList.add('hidden');
+  } catch (err) {
+    document.getElementById('inspect-loading').textContent = `Failed: ${err.message}`;
+  }
+}
+
+function closeInspect() {
+  document.getElementById('inspect-modal').classList.add('hidden');
+}
+
+async function showImageInfo(imageName) {
+  document.getElementById('inspect-content').classList.add('hidden');
+  document.getElementById('inspect-loading').classList.remove('hidden');
+  document.getElementById('inspect-loading').textContent = 'Loading image info...';
+  document.getElementById('inspect-modal').classList.remove('hidden');
+
+  try {
+    const data = await api(`/api/images/info?name=${encodeURIComponent(imageName)}`);
+    const size = data.Size ? `${(data.Size / 1024 / 1024).toFixed(1)} MB` : 'unknown';
+    const el = document.getElementById('inspect-content');
+    el.textContent = JSON.stringify({
+      repos: data.RepoTags,
+      size: size,
+      created: data.Created,
+      arch: `${data.Os}/${data.Architecture}`,
+      ...data,
+    }, null, 2);
+    el.classList.remove('hidden');
+    document.getElementById('inspect-loading').classList.add('hidden');
+  } catch (err) {
+    document.getElementById('inspect-loading').textContent = `Failed: ${err.message}`;
+  }
+}
+
+async function restartContainer(containerId, containerName) {
+  try {
+    await api(`/api/containers/${encodeURIComponent(containerId)}/restart`, { method: 'POST' });
+    showToast(`Restarting ${containerName}...`);
+    refreshContainers();
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+}
+
+async function stopContainer(containerId, containerName) {
+  if (!confirm(`Stop container "${containerName}"?`)) return;
+  try {
+    await api(`/api/containers/${encodeURIComponent(containerId)}/stop`, { method: 'POST' });
+    showToast(`Stopped ${containerName}`);
+    refreshContainers();
     refreshForwards();
   } catch (err) {
     showToast(`Failed: ${err.message}`, 'error');
   }
+}
+
+async function startContainer(containerId, containerName) {
+  try {
+    await api(`/api/containers/${encodeURIComponent(containerId)}/start`, { method: 'POST' });
+    showToast(`Started ${containerName}`);
+    refreshContainers();
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+}
+
+let pullEventSource = null;
+
+function openPull(containerId, containerName, image) {
+  closePull();
+  document.getElementById('pull-title').textContent = `Pull: ${image}`;
+  document.getElementById('pull-status').textContent = 'Connecting...';
+  document.getElementById('pull-layers').innerHTML = '';
+  document.getElementById('pull-modal').classList.remove('hidden');
+
+  const url = `/api/containers/${encodeURIComponent(containerId)}/pull?image=${encodeURIComponent(image)}`;
+  pullEventSource = new EventSource(url);
+
+  const layers = {};
+
+  pullEventSource.addEventListener('pull-error', (e) => {
+    document.getElementById('pull-status').textContent = `Error: ${e.data || 'connection failed'}`;
+    pullEventSource.close();
+  });
+
+  pullEventSource.addEventListener('done', () => {
+    Object.values(layers).forEach(l => { l.current = 1; l.total = 1; });
+    renderPullLayers(layers);
+    document.getElementById('pull-status').textContent = `Pull complete for ${containerName}`;
+    showToast(`Pulled latest for ${containerName}`);
+    pullEventSource.close();
+  });
+
+  pullEventSource.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.error) {
+        document.getElementById('pull-status').textContent = `Error: ${msg.error}`;
+        return;
+      }
+      if (msg.status) {
+        document.getElementById('pull-status').textContent = msg.status;
+        if (msg.status.startsWith('Resolved: ')) {
+          document.getElementById('pull-title').textContent = `Pull: ${msg.status.slice(10)}`;
+        }
+      }
+      if (msg.id) {
+        const isTag = /pulling from/i.test(msg.status || '');
+        if (!isTag) {
+          const layer = layers[msg.id] || (layers[msg.id] = {});
+          if (msg.progressDetail) {
+            layer.current = msg.progressDetail.current || 0;
+            layer.total = msg.progressDetail.total || layer.total || 1;
+          }
+          if (/complete|exists/i.test(msg.status || '')) {
+            layer.current = layer.total || 1;
+          }
+          renderPullLayers(layers);
+        }
+      }
+    } catch (_) {}
+  };
+
+  pullEventSource.onerror = () => {
+    if (pullEventSource.readyState === EventSource.CLOSED) {
+      document.getElementById('pull-status').textContent = 'Disconnected';
+    }
+  };
+}
+
+function renderPullLayers(layers) {
+  const el = document.getElementById('pull-layers');
+  el.innerHTML = Object.entries(layers).map(([id, l]) => {
+    const pct = l.total ? Math.round((l.current / l.total) * 100) : 0;
+    const done = pct >= 100;
+    const shortId = id.length > 12 ? id.substring(7, 19) : id;
+    return `<div class="pull-layer">
+      <span class="layer-id">${shortId}</span>
+      <div class="layer-bar"><div class="layer-bar-fill${done ? ' done' : ''}" style="width:${pct}%"></div></div>
+      <span class="layer-pct">${pct}%</span>
+    </div>`;
+  }).join('');
+}
+
+function closePull() {
+  if (pullEventSource) {
+    pullEventSource.close();
+    pullEventSource = null;
+  }
+  document.getElementById('pull-modal').classList.add('hidden');
+}
+
+function renderComposeTags(filteredCount) {
+  const projects = [...new Set(state.containers.filter(c => c.composeProject).map(c => c.composeProject))];
+  const el = document.getElementById('compose-tags');
+  if (projects.length === 0) {
+    el.innerHTML = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  el.innerHTML = `<span class="compose-count">${filteredCount}/${state.containers.length}</span>` + projects.map(p => {
+    const active = state.composeFilter.includes(p) ? ' active' : '';
+    return `<span class="compose-tag${active}" onclick="filterByCompose('${escapeHtml(p)}')">${escapeHtml(p)}</span>`;
+  }).join('');
+  if (state.composeFilter.length) {
+    el.innerHTML += `<span class="compose-tag clear" onclick="filterByCompose(null)">&times; clear</span>`;
+  }
+}
+
+function filterByCompose(project) {
+  if (!project) {
+    state.composeFilter = [];
+  } else {
+    const idx = state.composeFilter.indexOf(project);
+    if (idx === -1) {
+      state.composeFilter.push(project);
+    } else {
+      state.composeFilter.splice(idx, 1);
+    }
+  }
+  localStorage.setItem('composeFilter', JSON.stringify(state.composeFilter));
+  renderContainers();
 }
 
 function escapeHtml(str) {
@@ -221,9 +527,21 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function toggleShowAll() {
+  state.showAll = document.getElementById('show-all-toggle').checked;
+  renderContainers();
+}
+
+function saveSearch() {
+  localStorage.setItem('containerSearch', document.getElementById('containers-search').value);
+}
+
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-action]');
-  if (!btn) return;
+  if (!btn) {
+    document.querySelectorAll('.action-dropdown:not(.hidden)').forEach(d => d.classList.add('hidden'));
+    return;
+  }
 
   const action = btn.dataset.action;
   if (action === 'forward') {
@@ -231,6 +549,28 @@ document.addEventListener('click', (e) => {
     openForwardModal(idx);
   } else if (action === 'stop-forward') {
     stopForward(btn.dataset.id);
+  } else if (action === 'logs') {
+    openLogs(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'inspect') {
+    openInspect(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'restart') {
+    restartContainer(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'stop-container') {
+    stopContainer(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'start-container') {
+    startContainer(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'pull') {
+    openPull(btn.dataset.id, btn.dataset.name, btn.dataset.image);
+  } else if (action === 'image-info') {
+    e.preventDefault();
+    showImageInfo(btn.dataset.image);
+  } else if (action === 'toggle-menu') {
+    e.stopPropagation();
+    const menu = document.querySelector(`[data-menu-idx="${btn.dataset.idx}"]`);
+    if (!menu) return;
+    const wasHidden = menu.classList.contains('hidden');
+    document.querySelectorAll('.action-dropdown:not(.hidden)').forEach(d => d.classList.add('hidden'));
+    if (wasHidden) menu.classList.remove('hidden');
   }
 });
 
@@ -238,6 +578,40 @@ document.getElementById('modal').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeModal();
 });
 
+document.getElementById('inspect-modal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeInspect();
+});
+
+document.getElementById('pull-modal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closePull();
+});
+
+const savedFilter = localStorage.getItem('composeFilter');
+if (savedFilter) {
+  try {
+    const arr = JSON.parse(savedFilter);
+    if (Array.isArray(arr)) state.composeFilter = arr;
+  } catch (_) {}
+}
+
+const savedSearch = localStorage.getItem('containerSearch');
+if (savedSearch) {
+  document.getElementById('containers-search').value = savedSearch;
+}
+
 refreshContainers();
 refreshForwards();
-setInterval(refreshForwards, 3000);
+
+fetch('/api/version').then(r => r.json()).then(v => {
+  document.getElementById('header-version').textContent = v.version;
+}).catch(() => {});
+
+const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const fwdWs = new WebSocket(`${proto}//${location.host}/api/forwards/ws`);
+fwdWs.onmessage = (e) => {
+  try {
+    state.forwards = JSON.parse(e.data);
+    renderForwardsUI();
+  } catch (_) {}
+};
+fwdWs.onclose = () => { setTimeout(() => { location.reload(); }, 3000); };
