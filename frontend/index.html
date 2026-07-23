@@ -4,23 +4,55 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>dporter - Docker Port Forwarder</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231D63ED'/><text x='16' y='23' text-anchor='middle' font-size='20'>&#x1F433;</text></svg>">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f7fa;color:#1a1a2e;line-height:1.6}
 .header{background:#1a1a2e;color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
 .header h1{font-size:1.25rem;font-weight:600}
 .header .badge{background:#4a6cf7;padding:2px 10px;border-radius:12px;font-size:0.75rem}
+.version-text{font-size:0.7rem;color:#64748b;font-family:monospace;margin-left:4px}
 .header-left{display:flex;align-items:center;gap:12px}
 .gh-link{color:#64748b;display:flex;align-items:center;transition:color .15s}
 .gh-link:hover{color:#fff}
 .gh-link svg{width:20px;height:20px;fill:currentColor}
 .container{margin:0 auto;padding:24px}
 .card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px}
-.card-header{padding:16px 24px;border-bottom:1px solid #e8ecf1;font-size:1rem;font-weight:600;display:flex;align-items:center;justify-content:space-between}
+.card-header{padding:16px 24px;border-bottom:1px solid #e8ecf1;font-size:1rem;font-weight:600;display:flex;align-items:center;justify-content:space-between;cursor:pointer}
+.card-header .arrow{transition:transform .2s;font-size:0.7rem;color:#94a3b8}
+.card-collapsed .card-header{border-bottom:none}
+.card-collapsed .card-body{display:none}
+.card-collapsed .arrow{transform:rotate(-90deg)}
 .card-body{padding:0}
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 .col-image{word-break:break-all}
-.col-action{width:80px}
+.image-link{color:#1a1a2e;text-decoration:none;cursor:pointer;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.image-link:hover{color:#4a6cf7;text-decoration:underline}
+.col-action{width:1px;white-space:nowrap}
+.action-btns{display:flex;gap:4px;position:relative}
+.action-dropdown{position:absolute;top:100%;left:0;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:50;min-width:100px;padding:4px}
+.action-dropdown .btn-icon{display:block;width:100%;text-align:left;padding:6px 10px;border:none;background:none;color:#1a1a2e;font-size:0.8rem;border-radius:4px}
+.action-dropdown .btn-icon:hover{background:#f1f5f9}
+.btn-more{padding:4px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;cursor:pointer;border:1px solid #cbd5e1;background:#fff;color:#64748b;line-height:1}
+.btn-more:hover{background:#f1f5f9}
+.compose-badge{display:inline-block;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-size:0.65rem;font-weight:600;margin-left:4px;vertical-align:middle}
+.compose-tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 24px;border-bottom:1px solid #e8ecf1}
+.compose-count{font-size:0.7rem;font-weight:600;color:#94a3b8;margin-right:4px}
+.compose-tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.7rem;font-weight:500;cursor:pointer;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;transition:all .15s}
+.compose-tag:hover{background:#e0f2fe;color:#0369a1;border-color:#bae6fd}
+.compose-tag.active{background:#4a6cf7;color:#fff;border-color:#4a6cf7}
+.compose-tag.clear{background:transparent;border:none;color:#94a3b8;padding:2px 4px}
+.compose-tag.clear:hover{color:#dc2626}
+.compose-action{font-size:0.7rem;color:#4a6cf7;cursor:pointer;padding:2px 6px;border-radius:4px;user-select:none}
+.compose-action:hover{background:#e0f2fe}
+.pull-layers{max-height:300px;overflow-y:auto}
+.pull-layer{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.75rem;font-family:monospace}
+.pull-layer .layer-id{width:120px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#64748b}
+.pull-layer .layer-bar{flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden}
+.pull-layer .layer-bar-fill{height:100%;background:#4a6cf7;border-radius:3px;transition:width .2s}
+.pull-layer .layer-bar-fill.done{background:#059669}
+.pull-layer .layer-pct{width:40px;text-align:right;flex-shrink:0;color:#64748b;font-size:0.7rem}
+.pull-status{padding:8px 0;font-size:0.8rem;color:#475569}
 th,td{padding:12px 24px;text-align:left;font-size:0.875rem}
 th{background:#f8fafc;font-weight:600;color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:.05em}
 tr:not(:last-child){border-bottom:1px solid #e8ecf1}
@@ -31,6 +63,8 @@ td .ip{font-family:'SF Mono',Monaco,monospace;font-size:0.8rem;color:#4a6cf7}
 td .port-tag{display:inline-block;background:#f1f5f9;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-family:'SF Mono',Monaco,monospace;margin:2px 4px 2px 0}
 td .port-tag.mapped{background:#ecfdf5;color:#059669}
 td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
+.port-link{display:inline-block;background:#ecfdf5;color:#059669;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-family:'SF Mono',Monaco,monospace;margin:2px 4px 2px 0;text-decoration:none;transition:all .15s}
+.port-link:hover{background:#d1fae5;color:#047857}
 .btn{padding:6px 14px;border-radius:6px;font-size:0.8rem;font-weight:500;cursor:pointer;border:none;transition:all .15s}
 .btn-primary{background:#4a6cf7;color:#fff}
 .btn-primary:hover{background:#3651d5}
@@ -62,11 +96,26 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 .forward-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px}
 .forward-card .arrow{color:#4a6cf7;font-family:monospace;font-size:0.85rem}
 .forward-card .meta{font-size:0.75rem;color:#64748b;margin-top:4px}
+.logs-drawer{position:fixed;top:0;right:0;width:50vw;min-width:480px;height:100vh;background:#0d1117;color:#c9d1d9;display:flex;flex-direction:column;z-index:150;transform:translateX(100%);transition:transform .25s ease;box-shadow:-4px 0 24px rgba(0,0,0,.4)}
+.logs-drawer.open{transform:translateX(0)}
+.logs-drawer-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #30363d;flex-shrink:0}
+.logs-drawer-header h3{font-size:0.95rem;font-weight:600;color:#f0f6fc}
+.logs-drawer-header .btn-group{display:flex;gap:6px}
+.logs-drawer-body{flex:1;overflow-y:auto;padding:12px 16px;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+.logs-drawer-body .log-stderr{color:#f85149}
+.logs-placeholder{color:#484f58;text-align:center;padding:40px 0}
+.btn-icon{padding:4px 8px;border-radius:4px;font-size:0.7rem;font-weight:500;cursor:pointer;border:1px solid #30363d;background:#21262d;color:#c9d1d9;transition:all .15s}
+.btn-icon:hover{background:#30363d;border-color:#8b949e}
+.btn-icon.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.modal-wide{width:80vw;max-width:900px;max-height:85vh;display:flex;flex-direction:column}
+.modal-wide .modal-body{overflow-y:auto;flex:1}
+.inspect-content{background:#0d1117;color:#c9d1d9;font-family:'SF Mono',Monaco,monospace;font-size:0.75rem;line-height:1.5;padding:12px 16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;max-height:50vh;overflow-y:auto}
+.inspect-loading{color:#8b949e;text-align:center;padding:24px}
 </style>
 </head>
 <body>
 <div class="header">
-  <div class="header-left"><h1>dporter</h1><span class="badge">Docker Port Forwarder</span></div>
+  <div class="header-left"><h1>dporter</h1><span class="badge">Docker Port Forwarder</span><span id="header-version" class="version-text"></span></div>
   <a class="gh-link" href="https://github.com/LinuxSuRen/dporter" target="_blank" rel="noopener noreferrer" title="View on GitHub">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
   </a>
@@ -74,8 +123,8 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 <div class="container">
 
 <div class="card" id="forwards-section">
-  <div class="card-header">
-    <span>Active Forwards</span>
+  <div class="card-header" onclick="toggleForwards()">
+    <span>Active Forwards <span class="arrow">&#9660;</span></span>
     <span id="forwards-count" style="font-size:0.8rem;color:#64748b">0</span>
   </div>
   <div class="card-body">
@@ -93,11 +142,13 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
   <div class="card-header">
     <span>Containers</span>
     <div style="display:flex;align-items:center;gap:8px">
-      <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="renderContainers()">
+      <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="saveSearch();renderContainers()">
+      <label style="font-size:0.8rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="show-all-toggle" onchange="toggleShowAll()" style="margin:0">All</label>
       <button type="button" class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
     </div>
   </div>
   <div class="card-body">
+    <div id="compose-tags" class="compose-tags hidden"></div>
     <div id="containers-loading" class="loading">Loading containers&hellip;</div>
     <div id="containers-error" class="empty-state hidden">
       <div class="icon">&#9888;&#65039;</div>
@@ -111,7 +162,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
     <div id="containers-table" class="hidden">
       <div class="table-wrap">
       <table>
-        <thead><tr><th style="width:24%">Name</th><th style="width:22%">Image</th><th style="width:10%">Status</th><th style="width:18%">IPs</th><th style="width:18%">Ports</th><th class="col-action"></th></tr></thead>
+        <thead><tr><th style="width:20%">Name</th><th style="width:28%">Image</th><th style="width:8%">Status</th><th style="width:10%">IPs</th><th style="width:14%">Ports</th><th style="width:80px">Actions</th></tr></thead>
         <tbody id="containers-tbody"></tbody>
       </table>
       </div>
@@ -148,6 +199,46 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
     <div class="modal-footer">
       <button type="button" class="btn" onclick="closeModal()" style="background:#f1f5f9;color:#475569">Cancel</button>
       <button type="button" class="btn btn-primary" onclick="createForward()">Start Forward</button>
+    </div>
+  </div>
+</div>
+
+<div class="logs-drawer" id="logs-drawer">
+  <div class="logs-drawer-header">
+    <h3 id="logs-title">Container Logs</h3>
+    <div class="btn-group">
+      <button type="button" class="btn-icon" id="logs-pause" onclick="toggleLogPause()">Pause</button>
+      <button type="button" class="btn-icon" onclick="clearLogs()">Clear</button>
+      <button type="button" class="btn-icon" onclick="closeLogs()">&times;</button>
+    </div>
+  </div>
+  <div class="logs-drawer-body" id="logs-output">
+    <div class="logs-placeholder">Connecting...</div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="inspect-modal">
+  <div class="modal modal-wide">
+    <div class="modal-header">Container Inspect</div>
+    <div class="modal-body">
+      <div class="inspect-loading" id="inspect-loading">Loading...</div>
+      <div class="inspect-content hidden" id="inspect-content"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick="closeInspect()" style="background:#f1f5f9;color:#475569">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="pull-modal">
+  <div class="modal modal-wide">
+    <div class="modal-header" id="pull-title">Pull Image</div>
+    <div class="modal-body">
+      <div class="pull-status" id="pull-status">Connecting...</div>
+      <div class="pull-layers" id="pull-layers"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick="closePull()" style="background:#f1f5f9;color:#475569">Close</button>
     </div>
   </div>
 </div>
