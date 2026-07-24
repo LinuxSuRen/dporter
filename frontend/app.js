@@ -339,14 +339,21 @@ function openShell(containerId, containerName) {
     }
   });
 
-  const decoder = new TextDecoder();
   shellWs.onmessage = (e) => {
-    if (e.data instanceof Blob) {
-      e.data.arrayBuffer().then(buf => {
-        shellTerm.write(decoder.decode(new Uint8Array(buf)));
-      });
-    } else if (e.data instanceof ArrayBuffer) {
-      shellTerm.write(decoder.decode(new Uint8Array(e.data)));
+    if (e.data instanceof ArrayBuffer) {
+      const bytes = new Uint8Array(e.data);
+      let str = '';
+      for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+      shellTerm.write(str);
+    } else if (e.data instanceof Blob) {
+      const r = new FileReader();
+      r.onload = () => {
+        const bytes = new Uint8Array(r.result);
+        let str = '';
+        for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+        shellTerm.write(str);
+      };
+      r.readAsArrayBuffer(e.data);
     } else {
       shellTerm.write(e.data);
     }

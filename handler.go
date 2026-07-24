@@ -149,7 +149,8 @@ func (s *Server) handleForwardDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:       func(r *http.Request) bool { return true },
+	EnableCompression: false,
 }
 
 func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
