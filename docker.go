@@ -460,19 +460,20 @@ func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-
 	}
 
 	// Read HTTP response
-	br := bufio.NewReader(conn)
-	respLine, err := br.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-	if !strings.Contains(respLine, "200") && !strings.Contains(respLine, "101") {
-		return fmt.Errorf("exec start: %s", strings.TrimSpace(respLine))
-	}
+	var respBuf []byte
+	b := make([]byte, 1)
 	for {
-		line, err := br.ReadString('\n')
-		if err != nil || line == "\r\n" || line == "\n" {
+		if _, err := io.ReadFull(conn, b); err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+		respBuf = append(respBuf, b[0])
+		if len(respBuf) >= 4 && respBuf[len(respBuf)-4] == '\r' && respBuf[len(respBuf)-3] == '\n' && respBuf[len(respBuf)-2] == '\r' && respBuf[len(respBuf)-1] == '\n' {
 			break
 		}
+	}
+	respLine := string(respBuf)
+	if !strings.Contains(respLine, "200") && !strings.Contains(respLine, "101") {
+		return fmt.Errorf("exec start: %s", strings.TrimSpace(strings.SplitN(respLine, "\r\n", 2)[0]))
 	}
 
 	// Bidirectional stream with Docker multiplex protocol
@@ -508,13 +509,13 @@ func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-
 	go func() {
 		headerBuf := make([]byte, 8)
 		for {
-			if _, err := io.ReadFull(br, headerBuf); err != nil {
+			if _, err := io.ReadFull(conn, headerBuf); err != nil {
 				errCh <- nil
 				return
 			}
 			size := binary.BigEndian.Uint32(headerBuf[4:])
 			if size > 0 {
-				if _, err := io.CopyN(stdout, br, int64(size)); err != nil {
+				if _, err := io.CopyN(stdout, conn, int64(size)); err != nil {
 					errCh <- err
 					return
 				}
