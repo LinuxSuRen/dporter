@@ -332,7 +332,6 @@ function openShell(containerId, containerName) {
   shellTerm.open(document.getElementById('shell-terminal'));
 
   shellWs = new WebSocket(url);
-  shellWs.binaryType = 'arraybuffer';
 
   shellTerm.onData(data => {
     if (shellWs && shellWs.readyState === WebSocket.OPEN) {
@@ -340,8 +339,10 @@ function openShell(containerId, containerName) {
     }
   });
 
-  shellWs.onmessage = (e) => {
-    if (e.data instanceof ArrayBuffer) {
+  shellWs.onmessage = async (e) => {
+    if (e.data instanceof Blob) {
+      shellTerm.write(new Uint8Array(await e.data.arrayBuffer()));
+    } else if (e.data instanceof ArrayBuffer) {
       shellTerm.write(new Uint8Array(e.data));
     } else {
       shellTerm.write(e.data);

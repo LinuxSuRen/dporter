@@ -402,6 +402,7 @@ func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-
 		"AttachStdout": true,
 		"AttachStderr": true,
 		"Tty":          true,
+		"Env":          []string{"TERM=xterm-256color"},
 		"Cmd":          []string{"/bin/sh"},
 	})
 	req, err := http.NewRequest("POST", "http://localhost/v1.43/containers/"+containerID+"/exec", io.NopCloser(strings.NewReader(string(createBody))))
