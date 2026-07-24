@@ -464,7 +464,7 @@ func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}
-	if !strings.Contains(respLine, "200") {
+	if !strings.Contains(respLine, "200") && !strings.Contains(respLine, "101") {
 		return fmt.Errorf("exec start: %s", strings.TrimSpace(respLine))
 	}
 	for {
