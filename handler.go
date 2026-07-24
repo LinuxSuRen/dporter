@@ -187,6 +187,60 @@ func (w *wsWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+type wsReadWriter struct {
+	conn *websocket.Conn
+	buf  []byte
+}
+
+func (rw *wsReadWriter) Read(p []byte) (int, error) {
+	if len(rw.buf) > 0 {
+		n := copy(p, rw.buf)
+		rw.buf = rw.buf[n:]
+		return n, nil
+	}
+	_, msg, err := rw.conn.ReadMessage()
+	if err != nil {
+		return 0, err
+	}
+	n := copy(p, msg)
+	if n < len(msg) {
+		rw.buf = msg[n:]
+	}
+	return n, nil
+}
+
+func (rw *wsReadWriter) Write(p []byte) (int, error) {
+	err := rw.conn.WriteMessage(websocket.BinaryMessage, p)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (s *Server) handleContainerShell(w http.ResponseWriter, r *http.Request) {
+	containerID := r.PathValue("id")
+	if containerID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing container id"})
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("ws upgrade shell: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Printf("ws shell: container=%s", containerID)
+
+	rw := &wsReadWriter{conn: conn}
+	go func() {
+		if err := dockerExec(containerID, rw, rw, nil); err != nil {
+			log.Printf("exec: %v", err)
+		}
+	}()
+}
+
 func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) {
 	containerID := r.PathValue("id")
 	if containerID == "" {

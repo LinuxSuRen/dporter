@@ -391,3 +391,148 @@ func parseDockerPort(portKey string) (int, string) {
 	}
 	return port, prot
 }
+
+func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-chan [2]int) error {
+	transport, _ := newDockerTransport()
+	client := &http.Client{Transport: transport}
+
+	// Create exec instance
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"AttachStdin":  true,
+		"AttachStdout": true,
+		"AttachStderr": true,
+		"Tty":          true,
+		"Cmd":          []string{"/bin/sh"},
+	})
+	req, err := http.NewRequest("POST", "http://localhost/v1.43/containers/"+containerID+"/exec", io.NopCloser(strings.NewReader(string(createBody))))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("exec create: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("exec create: HTTP %s - %s", resp.Status, string(body))
+	}
+	var createResult struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&createResult); err != nil {
+		return fmt.Errorf("exec create decode: %w", err)
+	}
+
+	// Start exec with hijacked connection
+	startBody, _ := json.Marshal(map[string]interface{}{
+		"Detach": false,
+		"Tty":    true,
+	})
+	startReq, err := http.NewRequest("POST", "http://localhost/v1.43/exec/"+createResult.ID+"/start", io.NopCloser(strings.NewReader(string(startBody))))
+	if err != nil {
+		return err
+	}
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("Connection", "Upgrade")
+	startReq.Header.Set("Upgrade", "tcp")
+
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	proto, addr := "unix", strings.TrimPrefix(os.Getenv("DOCKER_HOST"), "unix://")
+	if addr == "" {
+		addr = "/var/run/docker.sock"
+	}
+	if strings.HasPrefix(os.Getenv("DOCKER_HOST"), "tcp://") {
+		proto = "tcp"
+		addr = strings.TrimPrefix(os.Getenv("DOCKER_HOST"), "tcp://")
+	}
+
+	conn, err := dialer.DialContext(context.Background(), proto, addr)
+	if err != nil {
+		return fmt.Errorf("dial docker: %w", err)
+	}
+	defer conn.Close()
+
+	if err := startReq.Write(conn); err != nil {
+		return fmt.Errorf("write exec start: %w", err)
+	}
+
+	// Read HTTP response
+	br := bufio.NewReader(conn)
+	respLine, err := br.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if !strings.Contains(respLine, "200") {
+		return fmt.Errorf("exec start: %s", strings.TrimSpace(respLine))
+	}
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil || line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+
+	// Bidirectional stream with Docker multiplex protocol
+	errCh := make(chan error, 2)
+
+	// stdin -> Docker
+	if stdin != nil {
+		go func() {
+			buf := make([]byte, 32*1024)
+			for {
+				n, err := stdin.Read(buf)
+				if n > 0 {
+					header := []byte{0, 0, 0, 0, 0, 0, 0, 0}
+					binary.BigEndian.PutUint32(header[4:], uint32(n))
+					if _, werr := conn.Write(header); werr != nil {
+						errCh <- werr
+						return
+					}
+					if _, werr := conn.Write(buf[:n]); werr != nil {
+						errCh <- werr
+						return
+					}
+				}
+				if err != nil {
+					errCh <- nil
+					return
+				}
+			}
+		}()
+	}
+
+	// Docker -> stdout/stderr
+	go func() {
+		headerBuf := make([]byte, 8)
+		for {
+			if _, err := io.ReadFull(br, headerBuf); err != nil {
+				errCh <- nil
+				return
+			}
+			size := binary.BigEndian.Uint32(headerBuf[4:])
+			if size > 0 {
+				if _, err := io.CopyN(stdout, br, int64(size)); err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}
+	}()
+
+	// Resize handler
+	if resize != nil {
+		go func() {
+			for dims := range resize {
+				w, h := dims[0], dims[1]
+				resizeBody, _ := json.Marshal(map[string]int{"Height": h, "Width": w})
+				req, _ := http.NewRequest("POST", "http://localhost/v1.43/exec/"+createResult.ID+"/resize", io.NopCloser(strings.NewReader(string(resizeBody))))
+				req.Header.Set("Content-Type", "application/json")
+				client.Do(req)
+			}
+		}()
+	}
+
+	return <-errCh
+}

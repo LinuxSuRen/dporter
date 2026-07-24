@@ -101,6 +101,7 @@ function renderContainers() {
     if (c.state === 'running') {
       moreItems.push(
         `<button type="button" class="btn-icon" data-action="logs" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">Logs</button>`,
+        `<button type="button" class="btn-icon" data-action="shell" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">Shell</button>`,
         `<button type="button" class="btn-icon" data-action="restart" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" style="color:#d97706">Restart</button>`,
         `<button type="button" class="btn-icon" data-action="stop-container" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" style="color:#dc2626">Stop</button>`,
       );
@@ -308,6 +309,69 @@ function closeLogs() {
     logsWs = null;
   }
   document.getElementById('logs-drawer').classList.remove('open');
+}
+
+let shellWs = null;
+let shellTerm = null;
+let shellFit = null;
+
+function openShell(containerId, containerName) {
+  closeShell();
+  document.getElementById('shell-title').textContent = `Shell: ${containerName}`;
+  document.getElementById('shell-terminal').innerHTML = '';
+  document.getElementById('shell-drawer').classList.add('open');
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/api/containers/${encodeURIComponent(containerId)}/shell`;
+
+  shellTerm = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: "'SF Mono',Monaco,monospace", theme: { background: '#0d1117', foreground: '#c9d1d9' } });
+  if (typeof FitAddon !== 'undefined') {
+    shellFit = new FitAddon.FitAddon();
+    shellTerm.loadAddon(shellFit);
+  }
+  shellTerm.open(document.getElementById('shell-terminal'));
+
+  shellWs = new WebSocket(url);
+  shellWs.binaryType = 'arraybuffer';
+
+  shellTerm.onData(data => {
+    if (shellWs && shellWs.readyState === WebSocket.OPEN) {
+      shellWs.send(data);
+    }
+  });
+
+  shellWs.onmessage = (e) => {
+    if (e.data instanceof ArrayBuffer) {
+      shellTerm.write(new Uint8Array(e.data));
+    }
+  };
+
+  shellWs.onclose = () => {
+    shellTerm.write('\r\n[disconnected]\r\n');
+  };
+
+  shellWs.onerror = () => {
+    shellTerm.write('\r\n[connection error]\r\n');
+  };
+
+  if (shellFit) {
+    shellFit.fit();
+    window.addEventListener('resize', () => shellFit.fit());
+  }
+  shellTerm.focus();
+}
+
+function closeShell() {
+  if (shellWs) {
+    shellWs.close();
+    shellWs = null;
+  }
+  if (shellTerm) {
+    shellTerm.dispose();
+    shellTerm = null;
+    shellFit = null;
+  }
+  document.getElementById('shell-drawer').classList.remove('open');
 }
 
 function toggleLogPause() {
@@ -822,6 +886,8 @@ document.addEventListener('click', (e) => {
     stopForward(btn.dataset.id);
   } else if (action === 'logs') {
     openLogs(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'shell') {
+    openShell(btn.dataset.id, btn.dataset.name);
   } else if (action === 'inspect') {
     openInspect(btn.dataset.id, btn.dataset.name);
   } else if (action === 'restart') {
