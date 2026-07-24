@@ -210,7 +210,7 @@ func (rw *wsReadWriter) Read(p []byte) (int, error) {
 }
 
 func (rw *wsReadWriter) Write(p []byte) (int, error) {
-	err := rw.conn.WriteMessage(websocket.BinaryMessage, p)
+	err := rw.conn.WriteMessage(websocket.TextMessage, p)
 	if err != nil {
 		return 0, err
 	}
@@ -234,11 +234,10 @@ func (s *Server) handleContainerShell(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ws shell: container=%s", containerID)
 
 	rw := &wsReadWriter{conn: conn}
-	go func() {
-		if err := dockerExec(containerID, rw, rw, nil); err != nil {
-			log.Printf("exec: %v", err)
-		}
-	}()
+	if err := dockerExec(containerID, rw, rw, nil); err != nil {
+		log.Printf("exec: %v", err)
+		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[31mError: %v\x1b[0m\r\n", err)))
+	}
 }
 
 func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) {

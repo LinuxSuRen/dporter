@@ -341,9 +341,7 @@ function openShell(containerId, containerName) {
   });
 
   shellWs.onmessage = (e) => {
-    if (e.data instanceof ArrayBuffer) {
-      shellTerm.write(new Uint8Array(e.data));
-    }
+    shellTerm.write(e.data);
   };
 
   shellWs.onclose = () => {
