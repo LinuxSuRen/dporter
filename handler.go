@@ -209,8 +209,12 @@ func (rw *wsReadWriter) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func (rw *wsReadWriter) Write(p []byte) (int, error) {
-	err := rw.conn.WriteMessage(websocket.TextMessage, p)
+type wsBinaryWriter struct {
+	conn *websocket.Conn
+}
+
+func (w *wsBinaryWriter) Write(p []byte) (int, error) {
+	err := w.conn.WriteMessage(websocket.BinaryMessage, p)
 	if err != nil {
 		return 0, err
 	}
@@ -233,8 +237,9 @@ func (s *Server) handleContainerShell(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("ws shell: container=%s", containerID)
 
-	rw := &wsReadWriter{conn: conn}
-	if err := dockerExec(containerID, rw, rw, nil); err != nil {
+	stdin := &wsReadWriter{conn: conn}
+	stdout := &wsBinaryWriter{conn: conn}
+	if err := dockerExec(containerID, stdin, stdout, nil); err != nil {
 		log.Printf("exec: %v", err)
 		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[31mError: %v\x1b[0m\r\n", err)))
 	}
