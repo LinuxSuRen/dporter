@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -355,69 +357,402 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("docker", "compose", "-f", configFile, "down")
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, _ := w.(http.Flusher)
+
+	sendEvent := func(evt, data string) {
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt, data)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	sendData := func(data string) {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	// collect running service names and container names
+	var names []string
+	serviceMap := make(map[string]bool)
+	for _, c := range containers {
+		if c.ComposeProject == project && c.State == "running" {
+			names = append(names, c.Name)
+			if c.ComposeService != "" {
+				serviceMap[c.ComposeService] = true
+			}
+		}
+	}
+	var services []string
+	for s := range serviceMap {
+		services = append(services, s)
+	}
+	namesJSON, _ := json.Marshal(names)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"containers","names":%s}`, string(namesJSON)))
+
+	// Step 1: docker compose down (only running services)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"running"}`, project))
+
+	downArgs := append([]string{"compose", "-f", configFile, "down"}, services...)
+	cmd := exec.Command("docker", downArgs...)
 	if workingDir != "" {
 		cmd.Dir = workingDir
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "down failed", "output": string(out), "detail": err.Error()})
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	cmd.Start()
+
+	go func() {
+		scanStream(stdout, sendData)
+	}()
+	go func() {
+		scanStream(stderr, sendData)
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		sendEvent("restart-error", fmt.Sprintf(`"down failed: %v"`, err))
 		return
 	}
 
-	profiles := detectProfiles(configFile)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"done"}`, project))
+
+	// Step 2: docker compose up -d (only running services, with their profiles)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"running"}`, project))
+
+	profiles := activeProfiles(configFile, services)
 	args := []string{"compose", "-f", configFile}
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
+	args = append(args, services...)
 
 	cmd = exec.Command("docker", args...)
 	if workingDir != "" {
 		cmd.Dir = workingDir
 	}
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "up failed", "output": string(output), "detail": err.Error()})
+	stdout, _ = cmd.StdoutPipe()
+	stderr, _ = cmd.StderrPipe()
+	cmd.Start()
+
+	go func() {
+		scanStream(stdout, sendData)
+	}()
+	go func() {
+		scanStream(stderr, sendData)
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		sendEvent("restart-error", fmt.Sprintf(`"up failed: %v"`, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"output": string(output)})
+
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"done"}`, project))
+	sendEvent("done", "{}")
+}
+
+func (s *Server) handleComposeRestartPull(w http.ResponseWriter, r *http.Request) {
+	project := r.URL.Query().Get("project")
+	if project == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing project name"})
+		return
+	}
+
+	containers, err := listContainers()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var configFile, workingDir string
+	for _, c := range containers {
+		if c.ComposeProject == project && c.ComposeConfigFiles != "" {
+			configFile = c.ComposeConfigFiles
+			workingDir = c.ComposeWorkingDir
+			break
+		}
+	}
+	if configFile == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no compose config found for " + project})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, _ := w.(http.Flusher)
+
+	sendEvent := func(evt, data string) {
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt, data)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	sendData := func(data string) {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	execCmd := func(name string, args ...string) error {
+		cmd := exec.Command(name, args...)
+		if workingDir != "" {
+			cmd.Dir = workingDir
+		}
+		stdout, _ := cmd.StdoutPipe()
+		stderr, _ := cmd.StderrPipe()
+		cmd.Start()
+		go func() { scanStream(stdout, sendData) }()
+		go func() { scanStream(stderr, sendData) }()
+		return cmd.Wait()
+	}
+
+	var names []string
+	serviceMap := make(map[string]bool)
+	for _, c := range containers {
+		if c.ComposeProject == project && c.State == "running" {
+			names = append(names, c.Name)
+			if c.ComposeService != "" {
+				serviceMap[c.ComposeService] = true
+			}
+		}
+	}
+	var services []string
+	for s := range serviceMap {
+		services = append(services, s)
+	}
+	namesJSON, _ := json.Marshal(names)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"containers","names":%s}`, string(namesJSON)))
+
+	// Step 1: pull images first (services stay running, minimal downtime)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"pull","project":"%s","status":"running"}`, project))
+
+	var targets []ContainerInfo
+	for _, c := range containers {
+		if c.ComposeProject == project && c.State == "running" {
+			targets = append(targets, c)
+		}
+	}
+
+	if len(targets) > 0 {
+		transport, _ := newDockerTransport()
+		pullClient := &http.Client{Transport: transport}
+
+		type imageTarget struct {
+			Image      string
+			Containers []string
+		}
+		imageMap := make(map[string]*imageTarget)
+		var orderedImages []string
+
+		for _, c := range targets {
+			imageRef := c.Image
+			if strings.HasPrefix(imageRef, "sha256:") {
+				if resolved := resolveImageTag(pullClient, imageRef); resolved != "" {
+					imageRef = resolved
+				}
+			}
+			if existing, ok := imageMap[imageRef]; ok {
+				existing.Containers = append(existing.Containers, c.Name)
+			} else {
+				imageMap[imageRef] = &imageTarget{Image: imageRef, Containers: []string{c.Name}}
+				orderedImages = append(orderedImages, imageRef)
+			}
+		}
+
+		total := len(orderedImages)
+		for i, imgRef := range orderedImages {
+			img := imageMap[imgRef]
+			for _, name := range img.Containers {
+				fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"total\":%d,\"name\":\"%s\",\"image\":\"%s\",\"status\":\"pulling\"}\n\n", i, total, name, imgRef)
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			if err := dockerPullImage(pullClient, imgRef, w); err != nil {
+				for _, name := range img.Containers {
+					fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"error\",\"error\":\"%s\"}\n\n", i, name, err.Error())
+				}
+			} else {
+				for _, name := range img.Containers {
+					fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"done\"}\n\n", i, name)
+				}
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
+
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"pull","project":"%s","status":"done"}`, project))
+
+	// Step 2: down (only running services)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"running"}`, project))
+	if err := execCmd("docker", append([]string{"compose", "-f", configFile, "down"}, services...)...); err != nil {
+		sendEvent("restart-error", fmt.Sprintf(`"down failed: %v"`, err))
+		return
+	}
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"done"}`, project))
+
+	// Step 3: up (only running services, with their profiles)
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"running"}`, project))
+	profiles := activeProfiles(configFile, services)
+	args := []string{"compose", "-f", configFile}
+	for _, p := range profiles {
+		args = append(args, "--profile", p)
+	}
+	args = append(args, "up", "-d")
+	args = append(args, services...)
+	if err := execCmd("docker", args...); err != nil {
+		sendEvent("restart-error", fmt.Sprintf(`"up failed: %v"`, err))
+		return
+	}
+	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"done"}`, project))
+	sendEvent("done", "{}")
+}
+
+func scanStream(r io.Reader, emit func(string)) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		// Escape the line as JSON string for safe SSE delivery
+		encoded, _ := json.Marshal(line)
+		emit(fmt.Sprintf(`{"type":"restart","phase":"output","text":%s}`, string(encoded)))
+	}
 }
 
 func detectProfiles(configFile string) []string {
+	return activeProfiles(configFile, nil)
+}
+
+func activeProfiles(configFile string, runningServices []string) []string {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil
 	}
-	seen := map[string]bool{}
+
+	runningSet := make(map[string]bool)
+	for _, s := range runningServices {
+		runningSet[s] = true
+	}
+	returnAll := runningServices == nil
+
 	lines := strings.Split(string(data), "\n")
-	inProfiles := false
+
+	serviceProfiles := make(map[string][]string)
+	profileServices := make(map[string]map[string]bool)
+	inServices := false
+	currentService := ""
+	inServiceProfiles := false
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "profiles:") {
-			inProfiles = true
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if inProfiles && strings.HasPrefix(trimmed, "- ") {
+		if trimmed == "services:" {
+			inServices = true
+			continue
+		}
+		if !inServices {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				if strings.HasSuffix(trimmed, ":") {
+					currentService = strings.TrimSuffix(trimmed, ":")
+					inServiceProfiles = false
+				} else {
+					inServices = false
+					currentService = ""
+				}
+			}
+			continue
+		}
+		if currentService == "" {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if strings.HasPrefix(trimmed, "profiles:") {
+			inServiceProfiles = true
+			if bracket := strings.Index(trimmed, "["); bracket != -1 {
+				content := trimmed[bracket:]
+				content = strings.Trim(content, "[]")
+				for _, p := range strings.Split(content, ",") {
+					p = strings.TrimSpace(p)
+					p = strings.Trim(p, "\"'")
+					if p != "" {
+						serviceProfiles[currentService] = append(serviceProfiles[currentService], p)
+						if profileServices[p] == nil {
+							profileServices[p] = make(map[string]bool)
+						}
+						profileServices[p][currentService] = true
+					}
+				}
+				inServiceProfiles = false
+			}
+			continue
+		}
+		if inServiceProfiles && strings.HasPrefix(trimmed, "- ") {
 			val := strings.TrimSpace(trimmed[2:])
 			val = strings.Trim(val, "\"'")
 			if val != "" {
-				seen[val] = true
+				serviceProfiles[currentService] = append(serviceProfiles[currentService], val)
+				if profileServices[val] == nil {
+					profileServices[val] = make(map[string]bool)
+				}
+				profileServices[val][currentService] = true
 			}
 			continue
 		}
-		if inProfiles && strings.HasPrefix(trimmed, "-") && trimmed != "-" {
+		if inServiceProfiles && strings.HasPrefix(trimmed, "-") && trimmed != "-" {
 			val := strings.TrimSpace(trimmed[1:])
 			val = strings.Trim(val, "\"'")
 			if val != "" {
-				seen[val] = true
+				serviceProfiles[currentService] = append(serviceProfiles[currentService], val)
+				if profileServices[val] == nil {
+					profileServices[val] = make(map[string]bool)
+				}
+				profileServices[val][currentService] = true
 			}
 			continue
 		}
-		inProfiles = false
+		if indent <= 4 || (!strings.HasPrefix(line, "     ") && !strings.HasPrefix(line, "\t\t")) {
+			inServiceProfiles = false
+		}
 	}
+
+	if returnAll {
+		var result []string
+		for p := range profileServices {
+			result = append(result, p)
+		}
+		return result
+	}
+
 	var result []string
-	for p := range seen {
-		result = append(result, p)
+	for profile, svcSet := range profileServices {
+		allRunning := true
+		for svc := range svcSet {
+			if !runningSet[svc] {
+				allRunning = false
+				break
+			}
+		}
+		if allRunning && len(svcSet) > 0 {
+			result = append(result, profile)
+		}
 	}
 	return result
 }
@@ -486,24 +821,52 @@ func (s *Server) handleComposePull(w http.ResponseWriter, r *http.Request) {
 	transport, _ := newDockerTransport()
 	pullClient := &http.Client{Transport: transport}
 
-	for i, c := range targets {
+	type imageTarget struct {
+		Image      string
+		Containers []string
+	}
+	imageMap := make(map[string]*imageTarget)
+	var orderedImages []string
+
+	for _, c := range targets {
 		imageRef := c.Image
 		if strings.HasPrefix(imageRef, "sha256:") {
 			if resolved := resolveImageTag(pullClient, imageRef); resolved != "" {
 				imageRef = resolved
 			}
 		}
-		fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"total\":%d,\"name\":\"%s\",\"image\":\"%s\",\"status\":\"pulling\"}\n\n", i, len(targets), c.Name, imageRef)
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-		if err := dockerPullImage(pullClient, imageRef, nil); err != nil {
-			fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"error\",\"error\":\"%s\"}\n\n", i, c.Name, err.Error())
+		if existing, ok := imageMap[imageRef]; ok {
+			existing.Containers = append(existing.Containers, c.Name)
 		} else {
-			fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"done\"}\n\n", i, c.Name)
+			imageMap[imageRef] = &imageTarget{Image: imageRef, Containers: []string{c.Name}}
+			orderedImages = append(orderedImages, imageRef)
 		}
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
+	}
+
+	flusher, _ := w.(http.Flusher)
+	total := len(orderedImages)
+
+	for i, imgRef := range orderedImages {
+		img := imageMap[imgRef]
+
+		for _, name := range img.Containers {
+			fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"total\":%d,\"name\":\"%s\",\"image\":\"%s\",\"status\":\"pulling\"}\n\n", i, total, name, imgRef)
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		if err := dockerPullImage(pullClient, imgRef, w); err != nil {
+			for _, name := range img.Containers {
+				fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"error\",\"error\":\"%s\"}\n\n", i, name, err.Error())
+			}
+		} else {
+			for _, name := range img.Containers {
+				fmt.Fprintf(w, "data: {\"type\":\"container\",\"idx\":%d,\"name\":\"%s\",\"status\":\"done\"}\n\n", i, name)
+			}
+		}
+		if flusher != nil {
+			flusher.Flush()
 		}
 	}
 

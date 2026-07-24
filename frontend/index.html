@@ -7,8 +7,9 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231D63ED'/><text x='16' y='23' text-anchor='middle' font-size='20'>&#x1F433;</text></svg>">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f7fa;color:#1a1a2e;line-height:1.6}
-.header{background:#1a1a2e;color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f7fa;color:#1a1a2e;line-height:1.6;display:flex;flex-direction:column}
+.header{background:#1a1a2e;color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .header h1{font-size:1.25rem;font-weight:600}
 .header .badge{background:#4a6cf7;padding:2px 10px;border-radius:12px;font-size:0.75rem}
 .version-text{font-size:0.7rem;color:#64748b;font-family:monospace;margin-left:4px}
@@ -16,7 +17,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .gh-link{color:#64748b;display:flex;align-items:center;transition:color .15s}
 .gh-link:hover{color:#fff}
 .gh-link svg{width:20px;height:20px;fill:currentColor}
-.container{margin:0 auto;padding:24px}
+.container{margin:0 auto;padding:16px 24px 24px;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;width:100%;max-width:100%}
 .card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px}
 .card-header{padding:16px 24px;border-bottom:1px solid #e8ecf1;font-size:1rem;font-weight:600;display:flex;align-items:center;justify-content:space-between;cursor:pointer}
 .card-header .arrow{transition:transform .2s;font-size:0.7rem;color:#94a3b8}
@@ -122,7 +123,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 </div>
 <div class="container">
 
-<div class="card" id="forwards-section">
+<div class="card" id="forwards-section" style="flex-shrink:0">
   <div class="card-header" onclick="toggleForwards()">
     <span>Active Forwards <span class="arrow">&#9660;</span></span>
     <span id="forwards-count" style="font-size:0.8rem;color:#64748b">0</span>
@@ -138,7 +139,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="containers-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;margin-bottom:0">
   <div class="card-header">
     <span>Containers</span>
     <div style="display:flex;align-items:center;gap:8px">
@@ -147,7 +148,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
       <button type="button" class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
     </div>
   </div>
-  <div class="card-body">
+  <div class="card-body" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0">
     <div id="compose-tags" class="compose-tags hidden"></div>
     <div id="containers-loading" class="loading">Loading containers&hellip;</div>
     <div id="containers-error" class="empty-state hidden">
@@ -159,7 +160,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
       <p>No containers found</p>
       <p style="font-size:0.8rem;margin-top:4px">Start a Docker container to see it here</p>
     </div>
-    <div id="containers-table" class="hidden">
+    <div id="containers-table" class="hidden" style="flex:1;overflow-y:auto;min-height:0">
       <div class="table-wrap">
       <table>
         <thead><tr><th style="width:20%">Name</th><th style="width:28%">Image</th><th style="width:8%">Status</th><th style="width:10%">IPs</th><th style="width:14%">Ports</th><th style="width:80px">Actions</th></tr></thead>
