@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -390,4 +391,128 @@ func parseDockerPort(portKey string) (int, string) {
 		prot = parts[1]
 	}
 	return port, prot
+}
+
+func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-chan [2]int) error {
+	transport, _ := newDockerTransport()
+	client := &http.Client{Transport: transport}
+
+	// Create exec instance
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"AttachStdin":  true,
+		"AttachStdout": true,
+		"AttachStderr": true,
+		"Tty":          true,
+		"Env":          []string{"TERM=xterm-256color"},
+		"Cmd":          []string{"/bin/sh"},
+	})
+	req, err := http.NewRequest("POST", "http://localhost/v1.43/containers/"+containerID+"/exec", io.NopCloser(strings.NewReader(string(createBody))))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("exec create: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("exec create: HTTP %s - %s", resp.Status, string(body))
+	}
+	var createResult struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&createResult); err != nil {
+		return fmt.Errorf("exec create decode: %w", err)
+	}
+
+	// Start exec with hijacked connection
+	startBody, _ := json.Marshal(map[string]interface{}{
+		"Detach": false,
+		"Tty":    true,
+	})
+	startReq, err := http.NewRequest("POST", "http://localhost/v1.43/exec/"+createResult.ID+"/start", io.NopCloser(strings.NewReader(string(startBody))))
+	if err != nil {
+		return err
+	}
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("Connection", "Upgrade")
+	startReq.Header.Set("Upgrade", "tcp")
+
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	proto, addr := "unix", strings.TrimPrefix(os.Getenv("DOCKER_HOST"), "unix://")
+	if addr == "" {
+		addr = "/var/run/docker.sock"
+	}
+	if strings.HasPrefix(os.Getenv("DOCKER_HOST"), "tcp://") {
+		proto = "tcp"
+		addr = strings.TrimPrefix(os.Getenv("DOCKER_HOST"), "tcp://")
+	}
+
+	conn, err := dialer.DialContext(context.Background(), proto, addr)
+	if err != nil {
+		return fmt.Errorf("dial docker: %w", err)
+	}
+	defer conn.Close()
+
+	if err := startReq.Write(conn); err != nil {
+		return fmt.Errorf("write exec start: %w", err)
+	}
+
+	// Read HTTP response
+	var respBuf []byte
+	b := make([]byte, 1)
+	for {
+		if _, err := io.ReadFull(conn, b); err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+		respBuf = append(respBuf, b[0])
+		if len(respBuf) >= 4 && respBuf[len(respBuf)-4] == '\r' && respBuf[len(respBuf)-3] == '\n' && respBuf[len(respBuf)-2] == '\r' && respBuf[len(respBuf)-1] == '\n' {
+			break
+		}
+	}
+	respLine := string(respBuf)
+	if !strings.Contains(respLine, "200") && !strings.Contains(respLine, "101") {
+		return fmt.Errorf("exec start: %s", strings.TrimSpace(strings.SplitN(respLine, "\r\n", 2)[0]))
+	}
+
+	// Bidirectional stream — TTY mode uses raw PTY data (no multiplex headers).
+	// Docker API docs: "When the TTY setting is enabled, the stream is not
+	// multiplexed. The data exchanged is simply the raw data from the process PTY."
+	errCh := make(chan error, 2)
+
+	var closeOnce sync.Once
+	closeConn := func() {
+		closeOnce.Do(func() { conn.Close() })
+	}
+
+	if stdin != nil {
+		go func() {
+			_, err := io.Copy(conn, stdin)
+			closeConn()
+			errCh <- err
+		}()
+	}
+
+	go func() {
+		_, err := io.Copy(stdout, conn)
+		closeConn()
+		errCh <- err
+	}()
+
+	// Resize handler
+	if resize != nil {
+		go func() {
+			for dims := range resize {
+				w, h := dims[0], dims[1]
+				resizeBody, _ := json.Marshal(map[string]int{"Height": h, "Width": w})
+				req, _ := http.NewRequest("POST", "http://localhost/v1.43/exec/"+createResult.ID+"/resize", io.NopCloser(strings.NewReader(string(resizeBody))))
+				req.Header.Set("Content-Type", "application/json")
+				client.Do(req)
+			}
+		}()
+	}
+
+	return <-errCh
 }

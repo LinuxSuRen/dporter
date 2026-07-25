@@ -32,6 +32,53 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Username == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password required"})
+		return
+	}
+	if !authenticate(req.Username, req.Password) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	token := sessions.create(req.Username)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "dporter_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: 2,
+		MaxAge:   86400,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie("dporter_session"); err == nil {
+		sessions.remove(cookie.Value)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "dporter_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+	http.Redirect(w, r, "/login.html", http.StatusFound)
+}
+
 func (s *Server) handleContainers(w http.ResponseWriter, r *http.Request) {
 	containers, err := listContainers()
 	if err != nil {
@@ -149,7 +196,8 @@ func (s *Server) handleForwardDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:       func(r *http.Request) bool { return true },
+	EnableCompression: false,
 }
 
 func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +233,64 @@ func (w *wsWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+type wsReadWriter struct {
+	conn *websocket.Conn
+	buf  []byte
+}
+
+func (rw *wsReadWriter) Read(p []byte) (int, error) {
+	if len(rw.buf) > 0 {
+		n := copy(p, rw.buf)
+		rw.buf = rw.buf[n:]
+		return n, nil
+	}
+	_, msg, err := rw.conn.ReadMessage()
+	if err != nil {
+		return 0, err
+	}
+	n := copy(p, msg)
+	if n < len(msg) {
+		rw.buf = msg[n:]
+	}
+	return n, nil
+}
+
+type wsBinaryWriter struct {
+	conn *websocket.Conn
+}
+
+func (w *wsBinaryWriter) Write(p []byte) (int, error) {
+	err := w.conn.WriteMessage(websocket.BinaryMessage, p)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (s *Server) handleContainerShell(w http.ResponseWriter, r *http.Request) {
+	containerID := r.PathValue("id")
+	if containerID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing container id"})
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("ws upgrade shell: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Printf("ws shell: container=%s", containerID)
+
+	stdin := &wsReadWriter{conn: conn}
+	stdout := &wsBinaryWriter{conn: conn}
+	if err := dockerExec(containerID, stdin, stdout, nil); err != nil {
+		log.Printf("exec: %v", err)
+		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[31mError: %v\x1b[0m\r\n", err)))
+	}
 }
 
 func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) {
