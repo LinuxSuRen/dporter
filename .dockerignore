@@ -1,0 +1,10 @@
+.git
+.github
+.sisyphus
+*.md
+dporter
+dporter_darwin
+dporter_linux_amd64
+docker-compose.yml
+Dockerfile
+.dockerignore
