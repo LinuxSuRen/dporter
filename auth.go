@@ -72,7 +72,7 @@ func authenticate(user, password string) bool {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		fields := strings.SplitN(line, ":", 2)
+		fields := strings.SplitN(line, ":", 3)
 		if len(fields) < 2 || fields[0] != user {
 			continue
 		}
