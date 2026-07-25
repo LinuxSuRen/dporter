@@ -162,7 +162,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
         <button type="button" id="view-network" class="active" onclick="switchView('network')">Network</button>
         <button type="button" id="view-performance" onclick="switchView('performance')">Performance</button>
       </div>
-      <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="saveSearch();renderContainers()">
+      <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="saveSearch();handleSearch()">
       <label style="font-size:0.8rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="show-all-toggle" onchange="toggleShowAll()" style="margin:0">All</label>
       <button type="button" class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
     </div>

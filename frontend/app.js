@@ -37,10 +37,6 @@ function showEl(id) { document.getElementById(id).classList.remove('hidden'); }
 function hideEl(id) { document.getElementById(id).classList.add('hidden'); }
 
 async function refreshContainers() {
-  if (state.currentView === 'performance') {
-    return refreshStats();
-  }
-
   hideEl('containers-empty');
   hideEl('containers-error');
   hideEl('containers-table');
@@ -61,8 +57,13 @@ async function refreshContainers() {
     showEl('containers-empty');
     return;
   }
-  renderContainers();
-  showEl('containers-table');
+
+  if (state.currentView === 'network') {
+    renderContainers();
+    showEl('containers-table');
+  } else {
+    refreshStats();
+  }
 }
 
 function renderContainers() {
@@ -615,7 +616,11 @@ function filterByCompose(project) {
     }
   }
   localStorage.setItem('composeFilter', JSON.stringify(state.composeFilter));
-  renderContainers();
+  if (state.currentView === 'performance') {
+    renderStats();
+  } else {
+    renderContainers();
+  }
 }
 
 function composeRestartAll() {
@@ -896,7 +901,6 @@ function switchView(view) {
   state.currentView = view;
   document.getElementById('view-network').classList.toggle('active', view === 'network');
   document.getElementById('view-performance').classList.toggle('active', view === 'performance');
-  document.getElementById('containers-search').style.display = view === 'network' ? '' : 'none';
 
   if (view === 'network') {
     document.getElementById('network-table').classList.remove('hidden');
@@ -905,6 +909,7 @@ function switchView(view) {
   } else {
     document.getElementById('network-table').classList.add('hidden');
     document.getElementById('performance-table').classList.remove('hidden');
+    renderComposeTags(state.stats.length);
     refreshStats();
   }
 }
@@ -969,12 +974,22 @@ async function refreshStats() {
 }
 
 function renderStats() {
+  const search = (document.getElementById('containers-search').value || '').toLowerCase();
   const filtered = state.stats.filter(s => {
     if (!state.showAll && s.state !== 'running') return false;
-    return true;
+    if (state.composeFilter.length && !state.composeFilter.includes(s.composeProject || '')) return false;
+    if (!search) return true;
+    return s.name.toLowerCase().includes(search)
+      || s.id.toLowerCase().includes(search);
   });
 
+  renderComposeTags(filtered.length);
+
   const tbody = document.getElementById('stats-tbody');
+  if (filtered.length === 0 && search) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:32px">No containers matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
+    return;
+  }
   tbody.innerHTML = filtered.map((s) => {
     const stateClass = s.state === 'running' ? 'running' : 'stopped';
 
@@ -1007,6 +1022,14 @@ function formatBytes(bytes) {
 
 function saveSearch() {
   localStorage.setItem('containerSearch', document.getElementById('containers-search').value);
+}
+
+function handleSearch() {
+  if (state.currentView === 'performance') {
+    renderStats();
+  } else {
+    renderContainers();
+  }
 }
 
 document.addEventListener('click', (e) => {
