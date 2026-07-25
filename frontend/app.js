@@ -6,6 +6,12 @@ const state = {
   composeFilter: [],
 };
 
+function logout() {
+  const origin = window.location.origin;
+  const badUrl = origin.replace('://', '://logout@');
+  window.location.href = badUrl + '/';
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },

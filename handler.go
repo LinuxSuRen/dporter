@@ -32,6 +32,11 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("WWW-Authenticate", `Basic realm="dporter"`)
+	writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "logged out"})
+}
+
 func (s *Server) handleContainers(w http.ResponseWriter, r *http.Request) {
 	containers, err := listContainers()
 	if err != nil {

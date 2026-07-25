@@ -83,6 +83,7 @@ func main() {
 		fm = NewForwardManager()
 		srv := &Server{fm: fm}
 		mux.HandleFunc("GET /api/version", srv.handleVersion)
+		mux.HandleFunc("GET /api/logout", srv.handleLogout)
 		mux.HandleFunc("POST /api/containers/batch/restart", srv.handleBatchRestart)
 		mux.HandleFunc("GET /api/compose/restart", srv.handleComposeRestart)
 		mux.HandleFunc("GET /api/compose/restart-pull", srv.handleComposeRestartPull)
