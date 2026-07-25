@@ -1,2 +1,6 @@
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+github.com/openwall/yescrypt-go v1.0.0 h1:jsGk48zkFvtUjGVOhYPGh+CS595JmTRcKnpggK2AON4=
+github.com/openwall/yescrypt-go v1.0.0/go.mod h1:e6CWtFizUEOUttaOjeVMiv1lJaJie3mfOtLJ9CCD6sA=
+golang.org/x/crypto v0.25.0 h1:ypSNr+bnYL2YhwoMt2zPxHFmbAN1KZs/njMG3hxUp30=
+golang.org/x/crypto v0.25.0/go.mod h1:T+wALwcMOSE0kXgUAnPAHqTLW+XHgcELELW8VaDgm/M=

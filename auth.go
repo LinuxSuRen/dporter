@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	yescrypt "github.com/openwall/yescrypt-go"
 )
 
 func verifyShadowPassword(encrypted, password string) bool {
@@ -22,21 +24,39 @@ func verifyShadowPassword(encrypted, password string) bool {
 	}
 	id := parts[1]
 	salt := "$" + id + "$" + parts[2] + "$"
-	expectedHash := parts[3]
 
-	hashFn := func() hash.Hash { return nil }
 	switch id {
+	case "y":
+		computed, err := yescrypt.Hash([]byte(password), []byte(encrypted))
+		if err != nil {
+			return false
+		}
+		return subtle.ConstantTimeCompare([]byte(encrypted), computed) == 1
 	case "6":
-		hashFn = sha512.New
+		return verifySHAPassword(encrypted, password, sha512.New, salt)
 	case "5":
-		hashFn = sha256.New
+		return verifySHAPassword(encrypted, password, sha256.New, salt)
+	case "7":
+		// also yescrypt variant ($7$), same handling as $y$
+		computed, err := yescrypt.Hash([]byte(password), []byte(encrypted))
+		if err != nil {
+			return false
+		}
+		return subtle.ConstantTimeCompare([]byte(encrypted), computed) == 1
 	default:
 		return false
 	}
+}
+
+func verifySHAPassword(encrypted, password string, hashFn func() hash.Hash, salt string) bool {
+	parts := strings.Split(encrypted, "$")
+	if len(parts) < 4 {
+		return false
+	}
+	expectedHash := parts[3]
 	h := hashFn()
 	h.Write([]byte(password + salt))
 	computed := base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString(h.Sum(nil))
-
 	expectedBytes := []byte(strings.TrimSuffix(expectedHash, "\n"))
 	computedBytes := []byte(strings.TrimSuffix(computed, "\n"))
 	return subtle.ConstantTimeCompare(expectedBytes, computedBytes) == 1
