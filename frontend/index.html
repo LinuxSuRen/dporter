@@ -113,6 +113,17 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 .modal-wide .modal-body{overflow-y:auto;flex:1}
 .inspect-content{background:#0d1117;color:#c9d1d9;font-family:'SF Mono',Monaco,monospace;font-size:0.75rem;line-height:1.5;padding:12px 16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;max-height:50vh;overflow-y:auto}
 .inspect-loading{color:#8b949e;text-align:center;padding:24px}
+.view-toggle{display:inline-flex;background:#f1f5f9;border-radius:6px;padding:2px;gap:2px}
+.view-toggle button{padding:4px 12px;border:none;border-radius:4px;font-size:0.75rem;font-weight:500;cursor:pointer;background:transparent;color:#64748b;transition:all .15s}
+.view-toggle button.active{background:#4a6cf7;color:#fff}
+.view-toggle button:hover:not(.active){background:#e2e8f0}
+.stats-bar{height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;min-width:80px}
+.stats-bar-fill{height:100%;border-radius:4px;transition:width .3s}
+.stats-bar-fill.low{background:#059669}
+.stats-bar-fill.mid{background:#d97706}
+.stats-bar-fill.high{background:#dc2626}
+.stats-cell{font-family:'SF Mono',Monaco,monospace;font-size:0.8rem;white-space:nowrap}
+.stats-mem{color:#475569;font-size:0.7rem}
 </style>
 </head>
 <body>
@@ -147,6 +158,10 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
   <div class="card-header">
     <span>Containers</span>
     <div style="display:flex;align-items:center;gap:8px">
+      <div class="view-toggle">
+        <button type="button" id="view-network" class="active" onclick="switchView('network')">Network</button>
+        <button type="button" id="view-performance" onclick="switchView('performance')">Performance</button>
+      </div>
       <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="saveSearch();renderContainers()">
       <label style="font-size:0.8rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="show-all-toggle" onchange="toggleShowAll()" style="margin:0">All</label>
       <button type="button" class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
@@ -166,9 +181,13 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
     </div>
     <div id="containers-table" class="hidden" style="flex:1;overflow-y:auto;min-height:0">
       <div class="table-wrap">
-      <table>
+      <table id="network-table">
         <thead><tr><th style="width:20%">Name</th><th style="width:28%">Image</th><th style="width:8%">Status</th><th style="width:10%">IPs</th><th style="width:14%">Ports</th><th style="width:80px">Actions</th></tr></thead>
         <tbody id="containers-tbody"></tbody>
+      </table>
+      <table id="performance-table" class="hidden">
+        <thead><tr><th style="width:20%">Name</th><th style="width:8%">Status</th><th style="width:16%">CPU</th><th style="width:20%">Memory</th><th style="width:10%">Mem %</th><th style="width:80px">Actions</th></tr></thead>
+        <tbody id="stats-tbody"></tbody>
       </table>
       </div>
     </div>
