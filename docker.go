@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -322,6 +323,106 @@ func listContainers() ([]ContainerInfo, error) {
 		result = append(result, info)
 	}
 
+	return result, nil
+}
+
+// ContainerStats holds CPU and memory metrics for a single container.
+type ContainerStats struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	State          string  `json:"state"`
+	CPUPercent     float64 `json:"cpuPercent"`
+	MemoryUsage    int64   `json:"memoryUsage"`
+	MemoryLimit    int64   `json:"memoryLimit"`
+	MemoryPercent  float64 `json:"memoryPercent"`
+	ComposeProject string  `json:"composeProject,omitempty"`
+}
+
+// dockerStats mirrors the Docker Engine API response for GET /containers/{id}/stats.
+type dockerStats struct {
+	CPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		OnlineCPUs     uint32 `json:"online_cpus"`
+	} `json:"cpu_stats"`
+	PreCPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	} `json:"precpu_stats"`
+	MemoryStats struct {
+		Usage uint64 `json:"usage"`
+		Limit uint64 `json:"limit"`
+	} `json:"memory_stats"`
+}
+
+// getContainerStats fetches CPU and memory stats for a single container.
+func getContainerStats(httpClient *http.Client, containerID string) (*ContainerStats, error) {
+	var ds dockerStats
+	if err := dockerGet(httpClient, "containers/"+containerID+"/stats?stream=false", &ds); err != nil {
+		return nil, err
+	}
+
+	// CPU percent: delta of container usage / delta of system usage * online cpus * 100
+	cpuDelta := float64(ds.CPUStats.CPUUsage.TotalUsage - ds.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(ds.CPUStats.SystemCPUUsage - ds.PreCPUStats.SystemCPUUsage)
+	var cpuPercent float64
+	if systemDelta > 0 && cpuDelta > 0 {
+		cpuPercent = (cpuDelta / systemDelta) * float64(ds.CPUStats.OnlineCPUs) * 100
+		if cpuPercent > 100*float64(ds.CPUStats.OnlineCPUs) {
+			cpuPercent = 0
+		}
+	}
+
+	var memPercent float64
+	if ds.MemoryStats.Limit > 0 {
+		memPercent = float64(ds.MemoryStats.Usage) / float64(ds.MemoryStats.Limit) * 100
+	}
+
+	return &ContainerStats{
+		CPUPercent:    math.Round(cpuPercent*100) / 100,
+		MemoryUsage:   int64(ds.MemoryStats.Usage),
+		MemoryLimit:   int64(ds.MemoryStats.Limit),
+		MemoryPercent: math.Round(memPercent*100) / 100,
+	}, nil
+}
+
+// listContainerStats fetches stats for all containers returned by the Docker API.
+func listContainerStats() ([]ContainerStats, error) {
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to docker: %w", err)
+	}
+
+	var summaries []containerSummary
+	if err := dockerGet(httpClient, "containers/json?all=true", &summaries); err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	result := make([]ContainerStats, 0, len(summaries))
+	for _, cs := range summaries {
+		stat, err := getContainerStats(httpClient, cs.ID)
+		if err != nil {
+			continue
+		}
+		stat.ID = cs.ID[:12]
+		if len(cs.Names) > 0 {
+			stat.Name = strings.TrimPrefix(cs.Names[0], "/")
+		}
+		stat.State = cs.State
+
+		var inspect containerInspect
+		if err := dockerGet(httpClient, "containers/"+cs.ID+"/json", &inspect); err == nil {
+			if inspect.Config != nil && inspect.Config.Labels != nil {
+				stat.ComposeProject = inspect.Config.Labels["com.docker.compose.project"]
+			}
+		}
+
+		result = append(result, *stat)
+	}
 	return result, nil
 }
 

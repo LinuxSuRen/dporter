@@ -1,9 +1,11 @@
 const state = {
   containers: [],
   forwards: [],
+  stats: [],
   modalTarget: null,
   showAll: false,
   composeFilter: [],
+  currentView: 'network',
 };
 
 function logout() {
@@ -55,11 +57,18 @@ async function refreshContainers() {
     showEl('containers-empty');
     return;
   }
-  renderContainers();
-  showEl('containers-table');
+
+  if (state.currentView === 'network') {
+    renderContainers();
+    showEl('containers-table');
+  } else {
+    refreshStats();
+  }
 }
 
 function renderContainers() {
+  if (state.currentView !== 'network') return;
+
   const search = (document.getElementById('containers-search').value || '').toLowerCase();
   const filtered = state.containers.filter(c => {
     if (!state.showAll && c.state !== 'running') return false;
@@ -607,7 +616,11 @@ function filterByCompose(project) {
     }
   }
   localStorage.setItem('composeFilter', JSON.stringify(state.composeFilter));
-  renderContainers();
+  if (state.currentView === 'performance') {
+    renderStats();
+  } else {
+    renderContainers();
+  }
 }
 
 function composeRestartAll() {
@@ -877,11 +890,146 @@ function escapeHtml(str) {
 
 function toggleShowAll() {
   state.showAll = document.getElementById('show-all-toggle').checked;
-  renderContainers();
+  if (state.currentView === 'performance') {
+    renderStats();
+  } else {
+    renderContainers();
+  }
+}
+
+function switchView(view) {
+  state.currentView = view;
+  document.getElementById('view-network').classList.toggle('active', view === 'network');
+  document.getElementById('view-performance').classList.toggle('active', view === 'performance');
+
+  if (view === 'network') {
+    document.getElementById('network-table').classList.remove('hidden');
+    document.getElementById('performance-table').classList.add('hidden');
+    renderContainers();
+  } else {
+    document.getElementById('network-table').classList.add('hidden');
+    document.getElementById('performance-table').classList.remove('hidden');
+    renderComposeTags(state.stats.length);
+    refreshStats();
+  }
+}
+
+let statsEventSource = null;
+
+async function refreshStats() {
+  if (statsEventSource) {
+    statsEventSource.close();
+    statsEventSource = null;
+  }
+
+  hideEl('containers-empty');
+  hideEl('containers-error');
+  showEl('containers-loading');
+
+  state.stats = [];
+  document.getElementById('stats-tbody').innerHTML = '';
+
+  statsEventSource = new EventSource('/api/containers/stats/stream');
+
+  statsEventSource.onmessage = (e) => {
+    try {
+      const s = JSON.parse(e.data);
+      state.stats.push(s);
+      hideEl('containers-loading');
+      showEl('containers-table');
+      renderStats();
+    } catch (_) {}
+  };
+
+  statsEventSource.addEventListener('done', () => {
+    hideEl('containers-loading');
+    if (!state.stats.length) {
+      showEl('containers-empty');
+    } else {
+      showEl('containers-table');
+    }
+    statsEventSource.close();
+    statsEventSource = null;
+  });
+
+  statsEventSource.addEventListener('error', (e) => {
+    hideEl('containers-loading');
+    showEl('containers-error');
+    document.getElementById('containers-error-msg').textContent =
+      'Failed to load stats: ' + (e.data || 'connection error');
+    statsEventSource.close();
+    statsEventSource = null;
+  });
+
+  statsEventSource.onerror = () => {
+    if (statsEventSource && statsEventSource.readyState === EventSource.CLOSED) {
+      hideEl('containers-loading');
+      if (!state.stats.length) {
+        showEl('containers-error');
+        document.getElementById('containers-error-msg').textContent =
+          'Failed to load stats: connection closed';
+      }
+    }
+  };
+}
+
+function renderStats() {
+  const search = (document.getElementById('containers-search').value || '').toLowerCase();
+  const filtered = state.stats.filter(s => {
+    if (!state.showAll && s.state !== 'running') return false;
+    if (state.composeFilter.length && !state.composeFilter.includes(s.composeProject || '')) return false;
+    if (!search) return true;
+    return s.name.toLowerCase().includes(search)
+      || s.id.toLowerCase().includes(search);
+  });
+
+  renderComposeTags(filtered.length);
+
+  const tbody = document.getElementById('stats-tbody');
+  if (filtered.length === 0 && search) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:32px">No containers matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map((s) => {
+    const stateClass = s.state === 'running' ? 'running' : 'stopped';
+
+    const cpuCls = s.cpuPercent > 80 ? 'high' : s.cpuPercent > 50 ? 'mid' : 'low';
+    const cpuBar = `<div class="stats-bar"><div class="stats-bar-fill ${cpuCls}" style="width:${Math.min(s.cpuPercent, 100)}%"></div></div>`;
+    const cpuText = `${s.cpuPercent.toFixed(1)}%`;
+
+    const memCls = s.memoryPercent > 90 ? 'high' : s.memoryPercent > 60 ? 'mid' : 'low';
+    const memBar = `<div class="stats-bar"><div class="stats-bar-fill ${memCls}" style="width:${Math.min(s.memoryPercent, 100)}%"></div></div>`;
+    const memTotal = s.memoryLimit > 0 ? ` / ${formatBytes(s.memoryLimit)}` : '';
+    const memText = `${formatBytes(s.memoryUsage)}${memTotal}`;
+    const memPct = `${s.memoryPercent.toFixed(1)}%`;
+
+    return `<tr>
+      <td><strong>${escapeHtml(s.name)}</strong><br><span style="font-size:0.7rem;color:#94a3b8">${escapeHtml(s.id)}</span></td>
+      <td><span class="state state-${stateClass}">${escapeHtml(s.state)}</span></td>
+      <td><div class="stats-cell">${cpuText}</div>${cpuBar}</td>
+      <td><div class="stats-cell">${memText}</div>${memBar}</td>
+      <td class="stats-cell">${memPct}</td>
+    </tr>`;
+  }).join('');
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
 }
 
 function saveSearch() {
   localStorage.setItem('containerSearch', document.getElementById('containers-search').value);
+}
+
+function handleSearch() {
+  if (state.currentView === 'performance') {
+    renderStats();
+  } else {
+    renderContainers();
+  }
 }
 
 document.addEventListener('click', (e) => {

@@ -91,6 +91,8 @@ func main() {
 		mux.HandleFunc("GET /api/compose/pull", srv.handleComposePull)
 		mux.HandleFunc("GET /api/images/info", srv.handleImageInfo)
 		mux.HandleFunc("GET /api/containers", srv.handleContainers)
+		mux.HandleFunc("GET /api/containers/stats", srv.handleContainerStats)
+		mux.HandleFunc("GET /api/containers/stats/stream", srv.handleContainerStatsSSE)
 		mux.HandleFunc("GET /api/containers/{id}/shell", srv.handleContainerShell)
 		mux.HandleFunc("GET /api/containers/{id}/logs", srv.handleContainerLogs)
 		mux.HandleFunc("GET /api/containers/{id}/inspect", srv.handleContainerInspect)
