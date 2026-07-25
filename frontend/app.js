@@ -341,16 +341,12 @@ function openShell(containerId, containerName) {
 
   shellWs.onmessage = (e) => {
     if (e.data instanceof ArrayBuffer) {
-      const bytes = new Uint8Array(e.data);
-      let str = '';
-      for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+      const str = new TextDecoder().decode(e.data);
       shellTerm.write(str);
     } else if (e.data instanceof Blob) {
       const r = new FileReader();
       r.onload = () => {
-        const bytes = new Uint8Array(r.result);
-        let str = '';
-        for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+        const str = new TextDecoder().decode(r.result);
         shellTerm.write(str);
       };
       r.readAsArrayBuffer(e.data);

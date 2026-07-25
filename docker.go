@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -476,51 +477,28 @@ func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-
 		return fmt.Errorf("exec start: %s", strings.TrimSpace(strings.SplitN(respLine, "\r\n", 2)[0]))
 	}
 
-	// Bidirectional stream with Docker multiplex protocol
+	// Bidirectional stream — TTY mode uses raw PTY data (no multiplex headers).
+	// Docker API docs: "When the TTY setting is enabled, the stream is not
+	// multiplexed. The data exchanged is simply the raw data from the process PTY."
 	errCh := make(chan error, 2)
 
-	// stdin -> Docker
+	var closeOnce sync.Once
+	closeConn := func() {
+		closeOnce.Do(func() { conn.Close() })
+	}
+
 	if stdin != nil {
 		go func() {
-			buf := make([]byte, 32*1024)
-			for {
-				n, err := stdin.Read(buf)
-				if n > 0 {
-					header := []byte{0, 0, 0, 0, 0, 0, 0, 0}
-					binary.BigEndian.PutUint32(header[4:], uint32(n))
-					if _, werr := conn.Write(header); werr != nil {
-						errCh <- werr
-						return
-					}
-					if _, werr := conn.Write(buf[:n]); werr != nil {
-						errCh <- werr
-						return
-					}
-				}
-				if err != nil {
-					errCh <- nil
-					return
-				}
-			}
+			_, err := io.Copy(conn, stdin)
+			closeConn()
+			errCh <- err
 		}()
 	}
 
-	// Docker -> stdout/stderr
 	go func() {
-		headerBuf := make([]byte, 8)
-		for {
-			if _, err := io.ReadFull(conn, headerBuf); err != nil {
-				errCh <- nil
-				return
-			}
-			size := binary.BigEndian.Uint32(headerBuf[4:])
-			if size > 0 {
-				if _, err := io.CopyN(stdout, conn, int64(size)); err != nil {
-					errCh <- err
-					return
-				}
-			}
-		}
+		_, err := io.Copy(stdout, conn)
+		closeConn()
+		errCh <- err
 	}()
 
 	// Resize handler
