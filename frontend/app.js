@@ -988,47 +988,14 @@ function renderStats() {
     const memText = `${formatBytes(s.memoryUsage)}${memTotal}`;
     const memPct = `${s.memoryPercent.toFixed(1)}%`;
 
-    const moreMenu = buildStatsActionMenu(s);
-
     return `<tr>
       <td><strong>${escapeHtml(s.name)}</strong><br><span style="font-size:0.7rem;color:#94a3b8">${escapeHtml(s.id)}</span></td>
       <td><span class="state state-${stateClass}">${escapeHtml(s.state)}</span></td>
       <td><div class="stats-cell">${cpuText}</div>${cpuBar}</td>
       <td><div class="stats-cell">${memText}</div>${memBar}</td>
       <td class="stats-cell">${memPct}</td>
-      <td><div class="action-btns">${moreMenu}</div></td>
     </tr>`;
   }).join('');
-}
-
-function buildStatsActionMenu(s) {
-  const container = state.containers.find(c => c.id === s.id);
-  if (!container) return '';
-  const realIdx = state.containers.indexOf(container);
-
-  const moreItems = [
-    `<button type="button" class="btn-icon" data-action="inspect" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}">Inspect</button>`,
-    `<button type="button" class="btn-icon" data-action="pull" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}" data-image="${escapeHtml(container.image || '')}">Pull Image</button>`,
-  ];
-  if (s.state === 'running') {
-    moreItems.push(
-      `<button type="button" class="btn-icon" data-action="logs" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}">Logs</button>`,
-      `<button type="button" class="btn-icon" data-action="shell" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}">Shell</button>`,
-      `<button type="button" class="btn-icon" data-action="restart" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}" style="color:#d97706">Restart</button>`,
-      `<button type="button" class="btn-icon" data-action="stop-container" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}" style="color:#dc2626">Stop</button>`,
-    );
-  } else {
-    moreItems.push(
-      `<button type="button" class="btn-icon" data-action="start-container" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}" style="color:#059669">Start</button>`,
-    );
-  }
-
-  return `<span style="position:relative">
-    <button type="button" class="btn-more" data-action="toggle-menu" data-idx="${realIdx}">&hellip;</button>
-    <div class="action-dropdown hidden" data-menu-idx="${realIdx}">
-      ${moreItems.join('')}
-    </div>
-  </span>`;
 }
 
 function formatBytes(bytes) {
