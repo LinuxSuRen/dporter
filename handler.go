@@ -32,9 +32,51 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Username == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password required"})
+		return
+	}
+	if !authenticate(req.Username, req.Password) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	token := sessions.create(req.Username)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "dporter_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: 2,
+		MaxAge:   86400,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("WWW-Authenticate", `Basic realm="dporter"`)
-	writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "logged out"})
+	if cookie, err := r.Cookie("dporter_session"); err == nil {
+		sessions.remove(cookie.Value)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "dporter_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+	http.Redirect(w, r, "/login.html", http.StatusFound)
 }
 
 func (s *Server) handleContainers(w http.ResponseWriter, r *http.Request) {

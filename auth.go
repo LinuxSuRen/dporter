@@ -1,18 +1,72 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"hash"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	yescrypt "github.com/openwall/yescrypt-go"
 )
+
+type sessionEntry struct {
+	username string
+	expires  time.Time
+}
+
+type sessionStore struct {
+	mu     sync.Mutex
+	tokens map[string]sessionEntry
+}
+
+var sessions = &sessionStore{
+	tokens: make(map[string]sessionEntry),
+}
+
+func (s *sessionStore) create(username string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b := make([]byte, 32)
+	rand.Read(b)
+	token := hex.EncodeToString(b)
+
+	s.tokens[token] = sessionEntry{
+		username: username,
+		expires:  time.Now().Add(24 * time.Hour),
+	}
+	return token
+}
+
+func (s *sessionStore) validate(token string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.tokens[token]
+	if !ok {
+		return "", false
+	}
+	if time.Now().After(entry.expires) {
+		delete(s.tokens, token)
+		return "", false
+	}
+	return entry.username, true
+}
+
+func (s *sessionStore) remove(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tokens, token)
+}
 
 func verifyShadowPassword(encrypted, password string) bool {
 	if !strings.HasPrefix(encrypted, "$") {
@@ -37,7 +91,6 @@ func verifyShadowPassword(encrypted, password string) bool {
 	case "5":
 		return verifySHAPassword(encrypted, password, sha256.New, salt)
 	case "7":
-		// also yescrypt variant ($7$), same handling as $y$
 		computed, err := yescrypt.Hash([]byte(password), []byte(encrypted))
 		if err != nil {
 			return false
@@ -81,16 +134,34 @@ func authenticate(user, password string) bool {
 	return false
 }
 
-func basicAuthMiddleware(next http.Handler) http.Handler {
+func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login.html" || r.URL.Path == "/api/login" || r.URL.Path == "/api/logout" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if cookie, err := r.Cookie("dporter_session"); err == nil {
+			if _, ok := sessions.validate(cookie.Value); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		user, pass, ok := r.BasicAuth()
-		if !ok || !authenticate(user, pass) {
+		if ok && authenticate(user, pass) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("WWW-Authenticate", `Basic realm="dporter"`)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"unauthorized"}`)
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		http.Redirect(w, r, "/login.html", http.StatusFound)
 	})
 }

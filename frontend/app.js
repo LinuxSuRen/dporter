@@ -7,9 +7,7 @@ const state = {
 };
 
 function logout() {
-  const origin = window.location.origin;
-  const badUrl = origin.replace('://', '://logout@');
-  window.location.href = badUrl + '/';
+  window.location.href = '/api/logout';
 }
 
 async function api(path, opts = {}) {

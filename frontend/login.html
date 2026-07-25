@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dporter - Login</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231D63ED'/><text x='16' y='23' text-anchor='middle' font-size='20'>&#x1F433;</text></svg>">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.page{display:flex;gap:48px;max-width:880px;width:100%;padding:40px 24px;align-items:flex-start}
+.panel{background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.08);padding:40px;flex:1;max-width:380px}
+.panel h2{font-size:1.3rem;margin-bottom:8px}
+.panel .sub{color:#64748b;font-size:0.85rem;margin-bottom:24px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:0.85rem;font-weight:500;margin-bottom:6px;color:#475569}
+.form-group input{width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.95rem;outline:none;transition:border-color .15s}
+.form-group input:focus{border-color:#4a6cf7;box-shadow:0 0 0 3px rgba(74,108,247,.15)}
+.btn{width:100%;padding:12px;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-primary{background:#4a6cf7;color:#fff}
+.btn-primary:hover{background:#3b5de7}
+.error{color:#dc2626;font-size:0.8rem;margin-top:8px;display:none}
+.features{flex:1;max-width:420px}
+.features h2{font-size:1.3rem;margin-bottom:20px}
+.feature-list{list-style:none;display:flex;flex-direction:column;gap:16px}
+.feature-item{display:flex;gap:12px;align-items:flex-start}
+.feature-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0}
+.feature-icon.blue{background:#e0edff;color:#4a6cf7}
+.feature-icon.green{background:#dcfce7;color:#16a34a}
+.feature-icon.purple{background:#f3e8ff;color:#9333ea}
+.feature-icon.orange{background:#fff7ed;color:#ea580c}
+.feature-icon.red{background:#fee2e2;color:#dc2626}
+.feature-text strong{display:block;font-size:0.9rem;margin-bottom:2px}
+.feature-text span{font-size:0.8rem;color:#64748b}
+@media(max-width:700px){.page{flex-direction:column;align-items:center}.panel,.features{max-width:100%}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="panel">
+    <h2>dporter</h2>
+    <p class="sub">Docker 容器管理面板</p>
+    <form id="login-form">
+      <div class="form-group">
+        <label>用户名</label>
+        <input type="text" id="username" placeholder="Linux 系统用户" autocomplete="username" autofocus>
+      </div>
+      <div class="form-group">
+        <label>密码</label>
+        <input type="password" id="password" placeholder="系统密码" autocomplete="current-password">
+      </div>
+      <p class="error" id="error"></p>
+      <button type="submit" class="btn btn-primary" id="submit-btn">登 录</button>
+    </form>
+  </div>
+  <div class="features">
+    <h2>功能特色</h2>
+    <ul class="feature-list">
+      <li class="feature-item">
+        <div class="feature-icon blue">&#x1F4E6;</div>
+        <div class="feature-text"><strong>容器管理</strong><span>列表查看、启停控制、批量重启、详情 inspect</span></div>
+      </li>
+      <li class="feature-item">
+        <div class="feature-icon green">&#x2328;</div>
+        <div class="feature-text"><strong>Web 终端</strong><span>xterm.js 交互式 Shell，WebSocket 实时日志流</span></div>
+      </li>
+      <li class="feature-item">
+        <div class="feature-icon purple">&#x1F517;</div>
+        <div class="feature-text"><strong>端口转发</strong><span>按需创建 localhost → 容器的 TCP 端口转发</span></div>
+      </li>
+      <li class="feature-item">
+        <div class="feature-icon orange">&#x1F504;</div>
+        <div class="feature-text"><strong>Compose 集成</strong><span>按项目重启、拉取镜像、一键更新</span></div>
+      </li>
+      <li class="feature-item">
+        <div class="feature-icon red">&#x1F512;</div>
+        <div class="feature-text"><strong>离线可用</strong><span>零外部依赖，单二进制部署，支持 Linux 系统用户认证</span></div>
+      </li>
+    </ul>
+  </div>
+</div>
+<script>
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const user = document.getElementById('username').value;
+  const pass = document.getElementById('password').value;
+  const errEl = document.getElementById('error');
+  const btnEl = document.getElementById('submit-btn');
+  errEl.style.display = 'none';
+  btnEl.disabled = true;
+  btnEl.textContent = '登录中...';
+
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: user, password: pass }),
+  });
+  if (res.ok) {
+    window.location.href = '/';
+  } else {
+    errEl.textContent = '用户名或密码错误';
+    errEl.style.display = 'block';
+    btnEl.disabled = false;
+    btnEl.textContent = '登 录';
+  }
+});
+</script>
+</body>
+</html>
