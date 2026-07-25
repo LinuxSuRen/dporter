@@ -150,6 +150,14 @@ func (s *Server) handleContainerStatsSSE(w http.ResponseWriter, r *http.Request)
 				stat.Name = strings.TrimPrefix(cs.Names[0], "/")
 			}
 			stat.State = cs.State
+
+			var inspect containerInspect
+			if err := dockerGet(httpClient, "containers/"+cs.ID+"/json", &inspect); err == nil {
+				if inspect.Config != nil && inspect.Config.Labels != nil {
+					stat.ComposeProject = inspect.Config.Labels["com.docker.compose.project"]
+				}
+			}
+
 			ch <- result{cs: cs, stat: stat}
 		}(cs)
 	}

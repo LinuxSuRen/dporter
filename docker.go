@@ -328,13 +328,14 @@ func listContainers() ([]ContainerInfo, error) {
 
 // ContainerStats holds CPU and memory metrics for a single container.
 type ContainerStats struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	State         string  `json:"state"`
-	CPUPercent    float64 `json:"cpuPercent"`
-	MemoryUsage   int64   `json:"memoryUsage"`
-	MemoryLimit   int64   `json:"memoryLimit"`
-	MemoryPercent float64 `json:"memoryPercent"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	State          string  `json:"state"`
+	CPUPercent     float64 `json:"cpuPercent"`
+	MemoryUsage    int64   `json:"memoryUsage"`
+	MemoryLimit    int64   `json:"memoryLimit"`
+	MemoryPercent  float64 `json:"memoryPercent"`
+	ComposeProject string  `json:"composeProject,omitempty"`
 }
 
 // dockerStats mirrors the Docker Engine API response for GET /containers/{id}/stats.
@@ -412,6 +413,14 @@ func listContainerStats() ([]ContainerStats, error) {
 			stat.Name = strings.TrimPrefix(cs.Names[0], "/")
 		}
 		stat.State = cs.State
+
+		var inspect containerInspect
+		if err := dockerGet(httpClient, "containers/"+cs.ID+"/json", &inspect); err == nil {
+			if inspect.Config != nil && inspect.Config.Labels != nil {
+				stat.ComposeProject = inspect.Config.Labels["com.docker.compose.project"]
+			}
+		}
+
 		result = append(result, *stat)
 	}
 	return result, nil
