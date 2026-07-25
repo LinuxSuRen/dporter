@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -87,6 +88,87 @@ func (s *Server) handleContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, containers)
+}
+
+func (s *Server) handleContainerStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := listContainerStats()
+	if err != nil {
+		log.Printf("list container stats: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) handleContainerStatsSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	var summaries []containerSummary
+	if err := dockerGet(httpClient, "containers/json?all=true", &summaries); err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	type result struct {
+		cs   containerSummary
+		stat *ContainerStats
+	}
+	ch := make(chan result, len(summaries))
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+
+	for _, cs := range summaries {
+		wg.Add(1)
+		go func(cs containerSummary) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			stat, err := getContainerStats(httpClient, cs.ID)
+			if err != nil {
+				ch <- result{cs: cs}
+				return
+			}
+			stat.ID = cs.ID[:12]
+			if len(cs.Names) > 0 {
+				stat.Name = strings.TrimPrefix(cs.Names[0], "/")
+			}
+			stat.State = cs.State
+			ch <- result{cs: cs, stat: stat}
+		}(cs)
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	for res := range ch {
+		if res.stat != nil {
+			data, _ := json.Marshal(res.stat)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+
+	fmt.Fprintf(w, "event: done\ndata: \n\n")
+	flusher.Flush()
 }
 
 func (s *Server) handleForwardsList(w http.ResponseWriter, r *http.Request) {
