@@ -73,6 +73,22 @@ PORT=9090 ./dporter
 
 本地浏览器打开 `http://localhost:8080`，所有 API 请求自动转发到远程主机。
 
+### Docker 安装（无需 Go 环境）
+
+从已发布的容器镜像中直接提取二进制文件安装：
+
+```bash
+docker create --name tmp ghcr.io/linuxsuren/dporter:latest \
+  && docker cp tmp:/dporter /usr/local/bin/dporter \
+  && docker rm tmp \
+  && chmod +x /usr/local/bin/dporter
+
+# 验证
+dporter --help
+```
+
+镜像每次推送 `main` 分支和 `v*` 标签都会自动构建，支持 `linux/amd64` 和 `linux/arm64`。
+
 ## API
 
 ### 容器

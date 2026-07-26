@@ -124,6 +124,8 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 .stats-bar-fill.high{background:#dc2626}
 .stats-cell{font-family:'SF Mono',Monaco,monospace;font-size:0.8rem;white-space:nowrap}
 .stats-mem{color:#475569;font-size:0.7rem}
+.compose-file-content{background:#0d1117;color:#c9d1d9;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.75rem;line-height:1.5;padding:16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow-y:auto}
+.compose-file-path{font-family:'SF Mono',Monaco,monospace;font-size:0.75rem;color:#475569;margin-bottom:8px;padding:4px 8px;background:#f1f5f9;border-radius:4px;word-break:break-all}
 </style>
 </head>
 <body>
@@ -161,6 +163,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
       <div class="view-toggle">
         <button type="button" id="view-network" class="active" onclick="switchView('network')">Network</button>
         <button type="button" id="view-performance" onclick="switchView('performance')">Performance</button>
+        <button type="button" id="view-volumes" onclick="switchView('volumes')">Volumes</button>
       </div>
       <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="saveSearch();handleSearch()">
       <label style="font-size:0.8rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="show-all-toggle" onchange="toggleShowAll()" style="margin:0">All</label>
@@ -188,6 +191,10 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
       <table id="performance-table" class="hidden">
         <thead><tr><th style="width:24%">Name</th><th style="width:10%">Status</th><th style="width:18%">CPU</th><th style="width:24%">Memory</th><th style="width:12%">Mem %</th></tr></thead>
         <tbody id="stats-tbody"></tbody>
+      </table>
+      <table id="volumes-table" class="hidden">
+        <thead><tr><th style="width:26%">Name</th><th style="width:10%">Driver</th><th style="width:30%">Mountpoint</th><th style="width:10%">Scope</th><th style="width:10%">Size</th><th style="width:10%">Containers</th></tr></thead>
+        <tbody id="volumes-tbody"></tbody>
       </table>
       </div>
     </div>
@@ -264,6 +271,19 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
   </div>
 </div>
 
+<div class="modal-overlay hidden" id="volume-detail-modal">
+  <div class="modal modal-wide">
+    <div class="modal-header" id="volume-detail-title">Volume Detail</div>
+    <div class="modal-body">
+      <div class="inspect-loading" id="volume-detail-loading">Loading...</div>
+      <div class="hidden" id="volume-detail-content"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick="closeVolumeDetail()" style="background:#f1f5f9;color:#475569">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay hidden" id="pull-modal">
   <div class="modal modal-wide">
     <div class="modal-header" id="pull-title">Pull Image</div>
@@ -273,6 +293,19 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
     </div>
     <div class="modal-footer">
       <button type="button" class="btn" onclick="closePull()" style="background:#f1f5f9;color:#475569">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="compose-file-modal">
+  <div class="modal modal-wide">
+    <div class="modal-header" id="compose-file-title">Compose File</div>
+    <div class="modal-body">
+      <div class="inspect-loading" id="compose-file-loading">Loading...</div>
+      <div class="hidden" id="compose-file-result"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick="closeComposeFile()" style="background:#f1f5f9;color:#475569">Close</button>
     </div>
   </div>
 </div>
