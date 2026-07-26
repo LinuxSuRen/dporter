@@ -124,6 +124,8 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 .stats-bar-fill.high{background:#dc2626}
 .stats-cell{font-family:'SF Mono',Monaco,monospace;font-size:0.8rem;white-space:nowrap}
 .stats-mem{color:#475569;font-size:0.7rem}
+.compose-file-content{background:#0d1117;color:#c9d1d9;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.75rem;line-height:1.5;padding:16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow-y:auto}
+.compose-file-path{font-family:'SF Mono',Monaco,monospace;font-size:0.75rem;color:#475569;margin-bottom:8px;padding:4px 8px;background:#f1f5f9;border-radius:4px;word-break:break-all}
 </style>
 </head>
 <body>
@@ -273,6 +275,19 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
     </div>
     <div class="modal-footer">
       <button type="button" class="btn" onclick="closePull()" style="background:#f1f5f9;color:#475569">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="compose-file-modal">
+  <div class="modal modal-wide">
+    <div class="modal-header" id="compose-file-title">Compose File</div>
+    <div class="modal-body">
+      <div class="inspect-loading" id="compose-file-loading">Loading...</div>
+      <div class="hidden" id="compose-file-result"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick="closeComposeFile()" style="background:#f1f5f9;color:#475569">Close</button>
     </div>
   </div>
 </div>

@@ -1097,6 +1097,64 @@ func (s *Server) handleImageInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, img)
 }
 
+func (s *Server) handleComposeFileContent(w http.ResponseWriter, r *http.Request) {
+	project := r.PathValue("project")
+	if project == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing project name"})
+		return
+	}
+
+	containers, err := listContainers()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var configFile, workingDir string
+	for _, c := range containers {
+		if c.ComposeProject == project && c.ComposeConfigFiles != "" {
+			configFile = c.ComposeConfigFiles
+			workingDir = c.ComposeWorkingDir
+			break
+		}
+	}
+	if configFile == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no compose config found for " + project})
+		return
+	}
+
+	type fileEntry struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	var files []fileEntry
+
+	// ComposeConfigFiles can contain multiple comma-separated paths
+	for _, path := range strings.Split(configFile, ",") {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		// If path is relative, resolve against working directory
+		resolved := path
+		if !os.IsPathSeparator(path[0]) && workingDir != "" {
+			resolved = workingDir + "/" + path
+		}
+
+		data, err := os.ReadFile(resolved)
+		if err != nil {
+			files = append(files, fileEntry{Path: resolved, Content: fmt.Sprintf("(# error reading file: %v)", err)})
+			continue
+		}
+		files = append(files, fileEntry{Path: resolved, Content: string(data)})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"project": project,
+		"files":   files,
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -602,6 +602,9 @@ el.innerHTML += `<span class="compose-action" onclick="composeRestartAll()" titl
 el.innerHTML += `<span class="compose-action" onclick="composeRestartPullAll()" title="Restart with force pull">&#8635;&#8681; Restart &amp; Pull</span>`;
 el.innerHTML += `<span class="compose-action" onclick="composePullAll()" title="Pull all images">&#8681; Pull</span>`;
   }
+  if (state.composeFilter.length === 1) {
+el.innerHTML += `<span class="compose-action" onclick="viewComposeFile()" title="View compose file content">&#128196; View</span>`;
+  }
 }
 
 function filterByCompose(project) {
@@ -1090,6 +1093,43 @@ if (savedFilter) {
     const arr = JSON.parse(savedFilter);
     if (Array.isArray(arr)) state.composeFilter = arr;
   } catch (_) {}
+}
+
+async function viewComposeFile() {
+  const project = state.composeFilter[0];
+  if (!project) return;
+
+  document.getElementById('compose-file-title').textContent = `Compose: ${project}`;
+  document.getElementById('compose-file-loading').classList.remove('hidden');
+  document.getElementById('compose-file-result').classList.add('hidden');
+  document.getElementById('compose-file-modal').classList.remove('hidden');
+
+  try {
+    const data = await api(`/api/compose/${encodeURIComponent(project)}/file`);
+    showComposeFileContent(data);
+  } catch (err) {
+    showComposeFileContent({ error: err.message });
+  }
+}
+
+function showComposeFileContent(data) {
+  document.getElementById('compose-file-loading').classList.add('hidden');
+  const result = document.getElementById('compose-file-result');
+  result.classList.remove('hidden');
+
+  if (data.error) {
+    result.innerHTML = `<div class="inspect-content" style="color:#f85149">Error: ${escapeHtml(data.error)}</div>`;
+    return;
+  }
+
+  result.innerHTML = (data.files || []).map(f => `
+    <div class="compose-file-path">${escapeHtml(f.path)}</div>
+    <div class="compose-file-content">${escapeHtml(f.content)}</div>
+  `).join('');
+}
+
+function closeComposeFile() {
+  document.getElementById('compose-file-modal').classList.add('hidden');
 }
 
 const savedSearch = localStorage.getItem('containerSearch');

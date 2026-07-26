@@ -89,6 +89,7 @@ func main() {
 		mux.HandleFunc("GET /api/compose/restart", srv.handleComposeRestart)
 		mux.HandleFunc("GET /api/compose/restart-pull", srv.handleComposeRestartPull)
 		mux.HandleFunc("GET /api/compose/pull", srv.handleComposePull)
+		mux.HandleFunc("GET /api/compose/{project}/file", srv.handleComposeFileContent)
 		mux.HandleFunc("GET /api/images/info", srv.handleImageInfo)
 		mux.HandleFunc("GET /api/containers", srv.handleContainers)
 		mux.HandleFunc("GET /api/containers/stats", srv.handleContainerStats)
