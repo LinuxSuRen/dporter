@@ -2,6 +2,7 @@ const state = {
   containers: [],
   forwards: [],
   stats: [],
+  volumes: [],
   modalTarget: null,
   showAll: false,
   composeFilter: [],
@@ -61,7 +62,7 @@ async function refreshContainers() {
   if (state.currentView === 'network') {
     renderContainers();
     showEl('containers-table');
-  } else {
+  } else if (state.currentView === 'performance') {
     refreshStats();
   }
 }
@@ -895,6 +896,8 @@ function toggleShowAll() {
   state.showAll = document.getElementById('show-all-toggle').checked;
   if (state.currentView === 'performance') {
     renderStats();
+  } else if (state.currentView === 'volumes') {
+    renderVolumes();
   } else {
     renderContainers();
   }
@@ -904,16 +907,23 @@ function switchView(view) {
   state.currentView = view;
   document.getElementById('view-network').classList.toggle('active', view === 'network');
   document.getElementById('view-performance').classList.toggle('active', view === 'performance');
+  document.getElementById('view-volumes').classList.toggle('active', view === 'volumes');
+
+  document.getElementById('network-table').classList.add('hidden');
+  document.getElementById('performance-table').classList.add('hidden');
+  document.getElementById('volumes-table').classList.add('hidden');
 
   if (view === 'network') {
     document.getElementById('network-table').classList.remove('hidden');
-    document.getElementById('performance-table').classList.add('hidden');
     renderContainers();
-  } else {
-    document.getElementById('network-table').classList.add('hidden');
+  } else if (view === 'performance') {
     document.getElementById('performance-table').classList.remove('hidden');
     renderComposeTags(state.stats.length);
     refreshStats();
+  } else if (view === 'volumes') {
+    document.getElementById('volumes-table').classList.remove('hidden');
+    document.getElementById('compose-tags').classList.add('hidden');
+    refreshVolumes();
   }
 }
 
@@ -1016,6 +1026,76 @@ function renderStats() {
   }).join('');
 }
 
+async function showVolumeDetail(name) {
+  document.getElementById('volume-detail-title').textContent = `Volume: ${name}`;
+  document.getElementById('volume-detail-loading').classList.remove('hidden');
+  document.getElementById('volume-detail-content').classList.add('hidden');
+  document.getElementById('volume-detail-modal').classList.remove('hidden');
+
+  try {
+    const data = await api(`/api/volumes/${encodeURIComponent(name)}`);
+    renderVolumeDetail(data);
+  } catch (err) {
+    document.getElementById('volume-detail-loading').classList.add('hidden');
+    document.getElementById('volume-detail-content').classList.remove('hidden');
+    document.getElementById('volume-detail-content').innerHTML =
+      `<div class="inspect-content" style="color:#f85149">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderVolumeDetail(d) {
+  document.getElementById('volume-detail-loading').classList.add('hidden');
+  document.getElementById('volume-detail-content').classList.remove('hidden');
+
+  const labelRows = d.labels ? Object.entries(d.labels).map(([k, v]) =>
+    `<tr><td style="padding:4px 12px;color:#64748b;font-size:0.75rem">${escapeHtml(k)}</td><td style="padding:4px 12px;font-family:monospace;font-size:0.75rem">${escapeHtml(v)}</td></tr>`
+  ).join('') : '';
+
+  const optionRows = d.options ? Object.entries(d.options).map(([k, v]) =>
+    `<tr><td style="padding:4px 12px;color:#64748b;font-size:0.75rem">${escapeHtml(k)}</td><td style="padding:4px 12px;font-family:monospace;font-size:0.75rem">${escapeHtml(v)}</td></tr>`
+  ).join('') : '';
+
+  const containerRows = d.containers && d.containers.length
+    ? d.containers.map(c =>
+        `<tr>
+          <td style="padding:4px 12px"><strong>${escapeHtml(c.containerName)}</strong></td>
+          <td style="padding:4px 12px;font-family:monospace;font-size:0.75rem;color:#94a3b8">${escapeHtml(c.containerId)}</td>
+          <td style="padding:4px 12px;font-family:monospace;font-size:0.75rem">${escapeHtml(c.destination)}</td>
+          <td style="padding:4px 12px;color:#64748b">${escapeHtml(c.mode || 'rw')}</td>
+        </tr>`
+      ).join('')
+    : `<tr><td colspan="4" style="padding:8px 12px;color:#94a3b8;text-align:center">No containers using this volume</td></tr>`;
+
+  document.getElementById('volume-detail-content').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="form-group"><label>Name</label><input readonly value="${escapeHtml(d.name)}" style="background:#f8fafc;font-family:monospace;font-size:0.75rem"></div>
+      <div class="form-group"><label>Driver</label><input readonly value="${escapeHtml(d.driver)}" style="background:#f8fafc"></div>
+      <div class="form-group"><label>Scope</label><input readonly value="${escapeHtml(d.scope)}" style="background:#f8fafc"></div>
+      <div class="form-group"><label>Created</label><input readonly value="${escapeHtml(d.createdAt)}" style="background:#f8fafc;font-size:0.75rem"></div>
+    </div>
+    <div class="form-group"><label>Mountpoint</label><input readonly value="${escapeHtml(d.mountpoint)}" style="background:#f8fafc;font-family:monospace;font-size:0.75rem;width:100%"></div>
+    ${d.labels && Object.keys(d.labels).length ? `
+      <div style="margin-top:16px"><label style="font-weight:600;font-size:0.85rem;margin-bottom:8px;display:block">Labels</label>
+      <table style="width:100%;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden"><tbody>${labelRows}</tbody></table></div>
+    ` : ''}
+    ${d.options && Object.keys(d.options).length ? `
+      <div style="margin-top:16px"><label style="font-weight:600;font-size:0.85rem;margin-bottom:8px;display:block">Options</label>
+      <table style="width:100%;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden"><tbody>${optionRows}</tbody></table></div>
+    ` : ''}
+    <div style="margin-top:16px">
+      <label style="font-weight:600;font-size:0.85rem;margin-bottom:8px;display:block">Containers (${d.containers ? d.containers.length : 0})</label>
+      <table style="width:100%;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
+        <thead><tr><th style="width:30%">Container</th><th style="width:15%">ID</th><th style="width:35%">Mount Path</th><th style="width:20%">Mode</th></tr></thead>
+        <tbody>${containerRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function closeVolumeDetail() {
+  document.getElementById('volume-detail-modal').classList.add('hidden');
+}
+
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1030,9 +1110,74 @@ function saveSearch() {
 function handleSearch() {
   if (state.currentView === 'performance') {
     renderStats();
+  } else if (state.currentView === 'volumes') {
+    renderVolumes();
   } else {
     renderContainers();
   }
+}
+
+async function refreshVolumes() {
+  hideEl('containers-empty');
+  hideEl('containers-error');
+  hideEl('containers-table');
+  showEl('containers-loading');
+
+  try {
+    state.volumes = await api('/api/volumes');
+  } catch (err) {
+    hideEl('containers-loading');
+    showEl('containers-error');
+    document.getElementById('containers-error-msg').textContent =
+      `Failed to load volumes: ${err.message}`;
+    return;
+  }
+
+  hideEl('containers-loading');
+  if (!state.volumes.length) {
+    showEl('containers-empty');
+    return;
+  }
+  showEl('containers-table');
+  renderVolumes();
+}
+
+function renderVolumes() {
+  const search = (document.getElementById('containers-search').value || '').toLowerCase();
+  const filtered = state.volumes.filter(v => {
+    if (!search) return true;
+    return v.name.toLowerCase().includes(search)
+      || v.driver.toLowerCase().includes(search)
+      || v.mountpoint.toLowerCase().includes(search);
+  });
+
+  const composeDisplay = state.composeFilter.length === 0 || state.composeFilter.some(p =>
+    filtered.some(v => v.composeProject === p)
+  );
+
+  const tbody = document.getElementById('volumes-tbody');
+  if (filtered.length === 0 && search) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:32px">No volumes matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map((v) => {
+    const sizeText = v.sizeBytes >= 0 ? formatBytes(v.sizeBytes) : '<span style="color:#94a3b8">&mdash;</span>';
+    const refText = v.refCount >= 0 ? v.refCount : '<span style="color:#94a3b8">&mdash;</span>';
+    const composeBadge = v.composeProject
+      ? `<span class="compose-badge" title="compose project">${escapeHtml(v.composeProject)}</span>`
+      : '';
+    const displayName = v.name.length > 30 ? v.name.substring(0, 12) : v.name;
+    const nameTitle = v.name.length > 30 ? ` title="${escapeHtml(v.name)}"` : '';
+
+    return `<tr onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer">
+      <td><strong${nameTitle}>${escapeHtml(displayName)}</strong>${composeBadge}</td>
+      <td>${escapeHtml(v.driver)}</td>
+      <td><span style="font-family:monospace;font-size:0.75rem;word-break:break-all">${escapeHtml(v.mountpoint)}</span></td>
+      <td>${escapeHtml(v.scope)}</td>
+      <td>${sizeText}</td>
+      <td>${refText}</td>
+    </tr>`;
+  }).join('');
 }
 
 document.addEventListener('click', (e) => {

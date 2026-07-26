@@ -1155,6 +1155,32 @@ func (s *Server) handleComposeFileContent(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (s *Server) handleVolumes(w http.ResponseWriter, r *http.Request) {
+	volumes, err := listVolumes()
+	if err != nil {
+		log.Printf("list volumes: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, volumes)
+}
+
+func (s *Server) handleVolumeDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing volume name"})
+		return
+	}
+
+	detail, err := inspectVolumeWithContainers(name)
+	if err != nil {
+		log.Printf("volume detail %s: %v", name, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

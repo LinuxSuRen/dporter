@@ -617,3 +617,162 @@ func dockerExec(containerID string, stdin io.Reader, stdout io.Writer, resize <-
 
 	return <-errCh
 }
+
+type volumeUsageData struct {
+	RefCount int `json:"RefCount"`
+	Size     int `json:"Size"`
+}
+
+type dockerVolume struct {
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver"`
+	Mountpoint string            `json:"Mountpoint"`
+	Scope      string            `json:"Scope"`
+	CreatedAt  string            `json:"CreatedAt"`
+	Labels     map[string]string `json:"Labels,omitempty"`
+	UsageData  *volumeUsageData  `json:"UsageData,omitempty"`
+}
+
+type systemDfResponse struct {
+	Volumes []dockerVolume `json:"Volumes"`
+}
+
+type VolumeInfo struct {
+	Name           string `json:"name"`
+	Driver         string `json:"driver"`
+	Mountpoint     string `json:"mountpoint"`
+	Scope          string `json:"scope"`
+	CreatedAt      string `json:"createdAt"`
+	RefCount       int    `json:"refCount"`
+	SizeBytes      int    `json:"sizeBytes"`
+	ComposeProject string `json:"composeProject,omitempty"`
+}
+
+func listVolumes() ([]VolumeInfo, error) {
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to docker: %w", err)
+	}
+
+	var resp systemDfResponse
+	if err := dockerGet(httpClient, "system/df", &resp); err != nil {
+		return nil, fmt.Errorf("failed to list volumes: %w", err)
+	}
+
+	result := make([]VolumeInfo, 0, len(resp.Volumes))
+	for _, v := range resp.Volumes {
+		info := VolumeInfo{
+			Name:       v.Name,
+			Driver:     v.Driver,
+			Mountpoint: v.Mountpoint,
+			Scope:      v.Scope,
+			CreatedAt:  v.CreatedAt,
+			RefCount:   -1,
+			SizeBytes:  -1,
+		}
+		if v.UsageData != nil {
+			info.RefCount = v.UsageData.RefCount
+			info.SizeBytes = v.UsageData.Size
+		}
+		if v.Labels != nil {
+			info.ComposeProject = v.Labels["com.docker.compose.project"]
+		}
+		result = append(result, info)
+	}
+
+	return result, nil
+}
+
+type volumeDetail struct {
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver"`
+	Mountpoint string            `json:"Mountpoint"`
+	Scope      string            `json:"Scope"`
+	CreatedAt  string            `json:"CreatedAt"`
+	Labels     map[string]string `json:"Labels,omitempty"`
+	Options    map[string]string `json:"Options,omitempty"`
+}
+
+type volumeContainerRef struct {
+	ContainerID   string `json:"containerId"`
+	ContainerName string `json:"containerName"`
+	Destination   string `json:"destination"`
+	Mode          string `json:"mode"`
+}
+
+type VolumeDetail struct {
+	Name           string               `json:"name"`
+	Driver         string               `json:"driver"`
+	Mountpoint     string               `json:"mountpoint"`
+	Scope          string               `json:"scope"`
+	CreatedAt      string               `json:"createdAt"`
+	Labels         map[string]string    `json:"labels"`
+	Options        map[string]string    `json:"options"`
+	Containers     []volumeContainerRef `json:"containers"`
+	ComposeProject string               `json:"composeProject,omitempty"`
+}
+
+func inspectVolumeWithContainers(name string) (*VolumeDetail, error) {
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to docker: %w", err)
+	}
+
+	var vd volumeDetail
+	if err := dockerGet(httpClient, "volumes/"+name, &vd); err != nil {
+		return nil, fmt.Errorf("failed to inspect volume %s: %w", name, err)
+	}
+
+	type containerMount struct {
+		Type        string `json:"Type"`
+		Name        string `json:"Name"`
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+		Mode        string `json:"Mode"`
+		RW          bool   `json:"RW"`
+	}
+
+	type containerListItem struct {
+		ID     string           `json:"Id"`
+		Names  []string         `json:"Names"`
+		Mounts []containerMount `json:"Mounts"`
+	}
+
+	var containers []containerListItem
+	if err := dockerGet(httpClient, "containers/json?all=true", &containers); err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	var refs []volumeContainerRef
+	for _, c := range containers {
+		cName := ""
+		if len(c.Names) > 0 {
+			cName = strings.TrimPrefix(c.Names[0], "/")
+		}
+		for _, m := range c.Mounts {
+			if m.Type == "volume" && m.Name == name {
+				refs = append(refs, volumeContainerRef{
+					ContainerID:   c.ID[:12],
+					ContainerName: cName,
+					Destination:   m.Destination,
+					Mode:          m.Mode,
+				})
+			}
+		}
+	}
+
+	result := &VolumeDetail{
+		Name:       vd.Name,
+		Driver:     vd.Driver,
+		Mountpoint: vd.Mountpoint,
+		Scope:      vd.Scope,
+		CreatedAt:  vd.CreatedAt,
+		Labels:     vd.Labels,
+		Options:    vd.Options,
+		Containers: refs,
+	}
+	if vd.Labels != nil {
+		result.ComposeProject = vd.Labels["com.docker.compose.project"]
+	}
+	return result, nil
+}
