@@ -78,8 +78,7 @@ PORT=9090 ./dporter
 从已发布的容器镜像中直接提取二进制文件安装：
 
 ```bash
-# 替换 <tag> 为实际版本号或 commit SHA
-docker create --name tmp ghcr.io/linuxsuren/dporter:<tag> \
+docker create --name tmp ghcr.io/linuxsuren/dporter:latest \
   && docker cp tmp:/dporter /usr/local/bin/dporter \
   && docker rm tmp \
   && chmod +x /usr/local/bin/dporter
