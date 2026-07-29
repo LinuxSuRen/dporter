@@ -612,10 +612,17 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 	namesJSON, _ := json.Marshal(names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"containers","names":%s}`, string(namesJSON)))
 
-	// Step 1: docker compose down (only running services)
+	// collect profiles from running services
+	profiles := activeProfiles(configFile, services)
+
+	// Step 1: docker compose down (scoped by profiles, no individual service names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"running"}`, project))
 
-	downArgs := append([]string{"compose", "-f", configFile, "down"}, services...)
+	downArgs := []string{"compose", "-f", configFile}
+	for _, p := range profiles {
+		downArgs = append(downArgs, "--profile", p)
+	}
+	downArgs = append(downArgs, "down")
 	cmd := exec.Command("docker", downArgs...)
 	if workingDir != "" {
 		cmd.Dir = workingDir
@@ -638,16 +645,14 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"done"}`, project))
 
-	// Step 2: docker compose up -d (only running services, with their profiles)
+	// Step 2: docker compose up -d (scoped by profiles)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"running"}`, project))
 
-	profiles := activeProfiles(configFile, services)
 	args := []string{"compose", "-f", configFile}
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
-	args = append(args, services...)
 
 	cmd = exec.Command("docker", args...)
 	if workingDir != "" {
@@ -749,6 +754,13 @@ func (s *Server) handleComposeRestartPull(w http.ResponseWriter, r *http.Request
 	namesJSON, _ := json.Marshal(names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"containers","names":%s}`, string(namesJSON)))
 
+	profiles := activeProfiles(configFile, services)
+	downArgs := []string{"compose", "-f", configFile}
+	for _, p := range profiles {
+		downArgs = append(downArgs, "--profile", p)
+	}
+	downArgs = append(downArgs, "down")
+
 	// Step 1: pull images first (services stay running, minimal downtime)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"pull","project":"%s","status":"running"}`, project))
 
@@ -811,23 +823,21 @@ func (s *Server) handleComposeRestartPull(w http.ResponseWriter, r *http.Request
 
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"pull","project":"%s","status":"done"}`, project))
 
-	// Step 2: down (only running services)
+	// Step 2: down (scoped by profiles, no individual service names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"running"}`, project))
-	if err := execCmd("docker", append([]string{"compose", "-f", configFile, "down"}, services...)...); err != nil {
+	if err := execCmd("docker", downArgs...); err != nil {
 		sendEvent("restart-error", fmt.Sprintf(`"down failed: %v"`, err))
 		return
 	}
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"done"}`, project))
 
-	// Step 3: up (only running services, with their profiles)
+	// Step 3: up (scoped by profiles)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"running"}`, project))
-	profiles := activeProfiles(configFile, services)
 	args := []string{"compose", "-f", configFile}
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
-	args = append(args, services...)
 	if err := execCmd("docker", args...); err != nil {
 		sendEvent("restart-error", fmt.Sprintf(`"up failed: %v"`, err))
 		return
