@@ -111,6 +111,7 @@ function renderContainers() {
     const moreItems = [
       `<button type="button" class="btn-icon" data-action="inspect" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">Inspect</button>`,
       `<button type="button" class="btn-icon" data-action="pull" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" data-image="${escapeHtml(c.image)}">Pull Image</button>`,
+      `<button type="button" class="btn-icon" data-action="delete-container" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" style="color:#dc2626">Delete</button>`,
     ];
     if (c.state === 'running') {
       moreItems.push(
@@ -275,6 +276,17 @@ async function stopForward(id) {
 
 let logsWs = null;
 let logsPaused = false;
+let logsFilter = '';
+
+function applyLogFilter() {
+  const filter = (document.getElementById('logs-filter').value || '').toLowerCase();
+  logsFilter = filter;
+  const output = document.getElementById('logs-output');
+  for (const line of output.children) {
+    if (!line.dataset || !line.dataset.text) continue;
+    line.style.display = filter === '' || line.dataset.text.toLowerCase().includes(filter) ? '' : 'none';
+  }
+}
 
 function openLogs(containerId, containerName) {
   closeLogs();
@@ -282,7 +294,9 @@ function openLogs(containerId, containerName) {
   document.getElementById('logs-title').textContent = `Logs: ${containerName}`;
   document.getElementById('logs-pause').textContent = 'Pause';
   document.getElementById('logs-pause').classList.remove('active');
+  document.getElementById('logs-filter').value = '';
   logsPaused = false;
+  logsFilter = '';
 
   const output = document.getElementById('logs-output');
   output.innerHTML = '<div class="logs-placeholder">Connecting...</div>';
@@ -302,6 +316,10 @@ function openLogs(containerId, containerName) {
     if (logsPaused) return;
     const line = document.createElement('div');
     line.textContent = e.data;
+    line.dataset.text = e.data;
+    if (logsFilter && !e.data.toLowerCase().includes(logsFilter)) {
+      line.style.display = 'none';
+    }
     output.appendChild(line);
     output.scrollTop = output.scrollHeight;
   };
@@ -472,6 +490,18 @@ async function stopContainer(containerId, containerName) {
   try {
     await api(`/api/containers/${encodeURIComponent(containerId)}/stop`, { method: 'POST' });
     showToast(`Stopped ${containerName}`);
+    refreshContainers();
+    refreshForwards();
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+}
+
+async function deleteContainer(containerId, containerName) {
+  if (!confirm(`Delete container "${containerName}"?\n\nThis will force-remove the container. This action cannot be undone.`)) return;
+  try {
+    await api(`/api/containers/${encodeURIComponent(containerId)}`, { method: 'DELETE' });
+    showToast(`Deleted ${containerName}`);
     refreshContainers();
     refreshForwards();
   } catch (err) {
@@ -1205,6 +1235,8 @@ document.addEventListener('click', (e) => {
     stopContainer(btn.dataset.id, btn.dataset.name);
   } else if (action === 'start-container') {
     startContainer(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'delete-container') {
+    deleteContainer(btn.dataset.id, btn.dataset.name);
   } else if (action === 'pull') {
     openPull(btn.dataset.id, btn.dataset.name, btn.dataset.image);
   } else if (action === 'image-info') {

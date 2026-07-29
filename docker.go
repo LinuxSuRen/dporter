@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -130,6 +131,23 @@ func dockerPost(httpClient *http.Client, path string) error {
 	return nil
 }
 
+func dockerDelete(httpClient *http.Client, path string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://localhost/v1.43/%s", path), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker DELETE %s failed: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("docker DELETE %s: HTTP %s%s", path, resp.Status, suffix(body))
+	}
+	return nil
+}
+
 func suffix(b []byte) string {
 	if len(b) == 0 {
 		return ""
@@ -209,6 +227,9 @@ func getRegistryAuth(image string) string {
 	configPath := os.Getenv("DOCKER_CONFIG")
 	if configPath == "" {
 		home, _ := os.UserHomeDir()
+		if home == "" || home == "/" {
+			home = "/root"
+		}
 		configPath = home + "/.docker/config.json"
 	}
 	data, err := os.ReadFile(configPath)
@@ -216,9 +237,11 @@ func getRegistryAuth(image string) string {
 		return ""
 	}
 	var cfg struct {
-		Auths map[string]struct {
+		Auths       map[string]struct {
 			Auth string `json:"auth"`
 		} `json:"auths"`
+		CredsStore  string            `json:"credsStore"`
+		CredHelpers map[string]string `json:"credHelpers"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return ""
@@ -227,10 +250,48 @@ func getRegistryAuth(image string) string {
 	if idx := strings.Index(registry, "/"); idx != -1 {
 		registry = registry[:idx]
 	}
+
+	// 1. Check per-registry credential helper
+	if helper, ok := cfg.CredHelpers[registry]; ok {
+		if auth := getAuthFromHelper(helper, registry); auth != "" {
+			return auth
+		}
+	}
+
+	// 2. Check global cred store
+	if cfg.CredsStore != "" {
+		if auth := getAuthFromHelper(cfg.CredsStore, registry); auth != "" {
+			return auth
+		}
+	}
+
+	// 3. Check inline auths
 	if cred, ok := cfg.Auths[registry]; ok && cred.Auth != "" {
 		return base64EncodeAuth(cred.Auth)
 	}
 	return ""
+}
+
+func getAuthFromHelper(helper, registry string) string {
+	cmd := exec.Command("docker-credential-"+helper, "get")
+	cmd.Stdin = strings.NewReader(registry)
+	cmd.Stderr = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	var cred struct {
+		Username string `json:"Username"`
+		Secret   string `json:"Secret"`
+	}
+	if err := json.Unmarshal(out, &cred); err != nil {
+		return ""
+	}
+	if cred.Username == "" || cred.Secret == "" {
+		return ""
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte(cred.Username + ":" + cred.Secret))
+	return base64EncodeAuth(auth)
 }
 
 func base64EncodeAuth(encoded string) string {

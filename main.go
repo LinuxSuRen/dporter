@@ -102,6 +102,7 @@ func main() {
 		mux.HandleFunc("POST /api/containers/{id}/restart", srv.handleContainerRestart)
 		mux.HandleFunc("POST /api/containers/{id}/stop", srv.handleContainerStop)
 		mux.HandleFunc("POST /api/containers/{id}/start", srv.handleContainerStart)
+		mux.HandleFunc("DELETE /api/containers/{id}", srv.handleContainerDelete)
 		mux.HandleFunc("GET /api/containers/{id}/pull", srv.handleContainerPull)
 		mux.HandleFunc("GET /api/forwards", srv.handleForwardsList)
 		mux.HandleFunc("GET /api/forwards/ws", srv.handleForwardsWS)

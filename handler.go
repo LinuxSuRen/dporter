@@ -447,6 +447,27 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleContainerDelete(w http.ResponseWriter, r *http.Request) {
+	containerID := r.PathValue("id")
+	if containerID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing container id"})
+		return
+	}
+
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := dockerDelete(httpClient, "containers/"+containerID+"?force=true"); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleContainerPull(w http.ResponseWriter, r *http.Request) {
 	containerID := r.PathValue("id")
 	if containerID == "" {
@@ -591,10 +612,17 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 	namesJSON, _ := json.Marshal(names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"containers","names":%s}`, string(namesJSON)))
 
-	// Step 1: docker compose down (only running services)
+	// collect profiles from running services
+	profiles := activeProfiles(configFile, services)
+
+	// Step 1: docker compose down (scoped by profiles, no individual service names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"running"}`, project))
 
-	downArgs := append([]string{"compose", "-f", configFile, "down"}, services...)
+	downArgs := []string{"compose", "-f", configFile}
+	for _, p := range profiles {
+		downArgs = append(downArgs, "--profile", p)
+	}
+	downArgs = append(downArgs, "down")
 	cmd := exec.Command("docker", downArgs...)
 	if workingDir != "" {
 		cmd.Dir = workingDir
@@ -617,16 +645,14 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"done"}`, project))
 
-	// Step 2: docker compose up -d (only running services, with their profiles)
+	// Step 2: docker compose up -d (scoped by profiles)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"running"}`, project))
 
-	profiles := activeProfiles(configFile, services)
 	args := []string{"compose", "-f", configFile}
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
-	args = append(args, services...)
 
 	cmd = exec.Command("docker", args...)
 	if workingDir != "" {
@@ -728,6 +754,13 @@ func (s *Server) handleComposeRestartPull(w http.ResponseWriter, r *http.Request
 	namesJSON, _ := json.Marshal(names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"containers","names":%s}`, string(namesJSON)))
 
+	profiles := activeProfiles(configFile, services)
+	downArgs := []string{"compose", "-f", configFile}
+	for _, p := range profiles {
+		downArgs = append(downArgs, "--profile", p)
+	}
+	downArgs = append(downArgs, "down")
+
 	// Step 1: pull images first (services stay running, minimal downtime)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"pull","project":"%s","status":"running"}`, project))
 
@@ -790,23 +823,21 @@ func (s *Server) handleComposeRestartPull(w http.ResponseWriter, r *http.Request
 
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"pull","project":"%s","status":"done"}`, project))
 
-	// Step 2: down (only running services)
+	// Step 2: down (scoped by profiles, no individual service names)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"running"}`, project))
-	if err := execCmd("docker", append([]string{"compose", "-f", configFile, "down"}, services...)...); err != nil {
+	if err := execCmd("docker", downArgs...); err != nil {
 		sendEvent("restart-error", fmt.Sprintf(`"down failed: %v"`, err))
 		return
 	}
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"down","project":"%s","status":"done"}`, project))
 
-	// Step 3: up (only running services, with their profiles)
+	// Step 3: up (scoped by profiles)
 	sendData(fmt.Sprintf(`{"type":"restart","phase":"up","project":"%s","status":"running"}`, project))
-	profiles := activeProfiles(configFile, services)
 	args := []string{"compose", "-f", configFile}
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
 	}
 	args = append(args, "up", "-d")
-	args = append(args, services...)
 	if err := execCmd("docker", args...); err != nil {
 		sendEvent("restart-error", fmt.Sprintf(`"up failed: %v"`, err))
 		return
@@ -848,38 +879,43 @@ func activeProfiles(configFile string, runningServices []string) []string {
 
 	serviceProfiles := make(map[string][]string)
 	profileServices := make(map[string]map[string]bool)
-	inServices := false
+	var servicesIndent int = -1
 	currentService := ""
 	inServiceProfiles := false
+	curIndent := 0
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if trimmed == "services:" {
-			inServices = true
-			continue
-		}
-		if !inServices {
-			continue
-		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-				if strings.HasSuffix(trimmed, ":") {
-					currentService = strings.TrimSuffix(trimmed, ":")
-					inServiceProfiles = false
-				} else {
-					inServices = false
-					currentService = ""
-				}
+
+		curIndent = len(line) - len(strings.TrimLeft(line, " \t"))
+
+		if servicesIndent < 0 {
+			if trimmed == "services:" {
+				servicesIndent = curIndent
 			}
 			continue
 		}
+
+		// Exit services block if we dedent past services
+		if curIndent <= servicesIndent && trimmed != "" {
+			break
+		}
+
+		// Service name: exactly one level below services indent, ends with colon
+		if curIndent > servicesIndent && curIndent <= servicesIndent+2 && strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
+			currentService = strings.TrimSuffix(trimmed, ":")
+			inServiceProfiles = false
+			continue
+		}
+
 		if currentService == "" {
 			continue
 		}
-		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+
+		// profiles: key
 		if strings.HasPrefix(trimmed, "profiles:") {
 			inServiceProfiles = true
 			if bracket := strings.Index(trimmed, "["); bracket != -1 {
@@ -924,7 +960,7 @@ func activeProfiles(configFile string, runningServices []string) []string {
 			}
 			continue
 		}
-		if indent <= 4 || (!strings.HasPrefix(line, "     ") && !strings.HasPrefix(line, "\t\t")) {
+		if curIndent <= servicesIndent+2 {
 			inServiceProfiles = false
 		}
 	}
