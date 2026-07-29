@@ -130,6 +130,23 @@ func dockerPost(httpClient *http.Client, path string) error {
 	return nil
 }
 
+func dockerDelete(httpClient *http.Client, path string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://localhost/v1.43/%s", path), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker DELETE %s failed: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("docker DELETE %s: HTTP %s%s", path, resp.Status, suffix(body))
+	}
+	return nil
+}
+
 func suffix(b []byte) string {
 	if len(b) == 0 {
 		return ""

@@ -447,6 +447,27 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleContainerDelete(w http.ResponseWriter, r *http.Request) {
+	containerID := r.PathValue("id")
+	if containerID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing container id"})
+		return
+	}
+
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := dockerDelete(httpClient, "containers/"+containerID+"?force=true"); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleContainerPull(w http.ResponseWriter, r *http.Request) {
 	containerID := r.PathValue("id")
 	if containerID == "" {
