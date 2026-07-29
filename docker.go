@@ -227,6 +227,9 @@ func getRegistryAuth(image string) string {
 	configPath := os.Getenv("DOCKER_CONFIG")
 	if configPath == "" {
 		home, _ := os.UserHomeDir()
+		if home == "" || home == "/" {
+			home = "/root"
+		}
 		configPath = home + "/.docker/config.json"
 	}
 	data, err := os.ReadFile(configPath)
