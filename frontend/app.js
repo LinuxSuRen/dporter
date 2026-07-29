@@ -111,6 +111,7 @@ function renderContainers() {
     const moreItems = [
       `<button type="button" class="btn-icon" data-action="inspect" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">Inspect</button>`,
       `<button type="button" class="btn-icon" data-action="pull" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" data-image="${escapeHtml(c.image)}">Pull Image</button>`,
+      `<button type="button" class="btn-icon" data-action="delete-container" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}" style="color:#dc2626">Delete</button>`,
     ];
     if (c.state === 'running') {
       moreItems.push(
@@ -472,6 +473,18 @@ async function stopContainer(containerId, containerName) {
   try {
     await api(`/api/containers/${encodeURIComponent(containerId)}/stop`, { method: 'POST' });
     showToast(`Stopped ${containerName}`);
+    refreshContainers();
+    refreshForwards();
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+}
+
+async function deleteContainer(containerId, containerName) {
+  if (!confirm(`Delete container "${containerName}"?\n\nThis will force-remove the container. This action cannot be undone.`)) return;
+  try {
+    await api(`/api/containers/${encodeURIComponent(containerId)}`, { method: 'DELETE' });
+    showToast(`Deleted ${containerName}`);
     refreshContainers();
     refreshForwards();
   } catch (err) {
@@ -1205,6 +1218,8 @@ document.addEventListener('click', (e) => {
     stopContainer(btn.dataset.id, btn.dataset.name);
   } else if (action === 'start-container') {
     startContainer(btn.dataset.id, btn.dataset.name);
+  } else if (action === 'delete-container') {
+    deleteContainer(btn.dataset.id, btn.dataset.name);
   } else if (action === 'pull') {
     openPull(btn.dataset.id, btn.dataset.name, btn.dataset.image);
   } else if (action === 'image-info') {
