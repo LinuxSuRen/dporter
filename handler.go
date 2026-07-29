@@ -879,38 +879,43 @@ func activeProfiles(configFile string, runningServices []string) []string {
 
 	serviceProfiles := make(map[string][]string)
 	profileServices := make(map[string]map[string]bool)
-	inServices := false
+	var servicesIndent int = -1
 	currentService := ""
 	inServiceProfiles := false
+	curIndent := 0
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if trimmed == "services:" {
-			inServices = true
-			continue
-		}
-		if !inServices {
-			continue
-		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-				if strings.HasSuffix(trimmed, ":") {
-					currentService = strings.TrimSuffix(trimmed, ":")
-					inServiceProfiles = false
-				} else {
-					inServices = false
-					currentService = ""
-				}
+
+		curIndent = len(line) - len(strings.TrimLeft(line, " \t"))
+
+		if servicesIndent < 0 {
+			if trimmed == "services:" {
+				servicesIndent = curIndent
 			}
 			continue
 		}
+
+		// Exit services block if we dedent past services
+		if curIndent <= servicesIndent && trimmed != "" {
+			break
+		}
+
+		// Service name: exactly one level below services indent, ends with colon
+		if curIndent > servicesIndent && curIndent <= servicesIndent+2 && strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
+			currentService = strings.TrimSuffix(trimmed, ":")
+			inServiceProfiles = false
+			continue
+		}
+
 		if currentService == "" {
 			continue
 		}
-		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+
+		// profiles: key
 		if strings.HasPrefix(trimmed, "profiles:") {
 			inServiceProfiles = true
 			if bracket := strings.Index(trimmed, "["); bracket != -1 {
@@ -955,7 +960,7 @@ func activeProfiles(configFile string, runningServices []string) []string {
 			}
 			continue
 		}
-		if indent <= 4 || (!strings.HasPrefix(line, "     ") && !strings.HasPrefix(line, "\t\t")) {
+		if curIndent <= servicesIndent+2 {
 			inServiceProfiles = false
 		}
 	}
