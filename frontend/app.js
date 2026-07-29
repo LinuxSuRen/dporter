@@ -276,6 +276,17 @@ async function stopForward(id) {
 
 let logsWs = null;
 let logsPaused = false;
+let logsFilter = '';
+
+function applyLogFilter() {
+  const filter = (document.getElementById('logs-filter').value || '').toLowerCase();
+  logsFilter = filter;
+  const output = document.getElementById('logs-output');
+  for (const line of output.children) {
+    if (!line.dataset || !line.dataset.text) continue;
+    line.style.display = filter === '' || line.dataset.text.toLowerCase().includes(filter) ? '' : 'none';
+  }
+}
 
 function openLogs(containerId, containerName) {
   closeLogs();
@@ -283,7 +294,9 @@ function openLogs(containerId, containerName) {
   document.getElementById('logs-title').textContent = `Logs: ${containerName}`;
   document.getElementById('logs-pause').textContent = 'Pause';
   document.getElementById('logs-pause').classList.remove('active');
+  document.getElementById('logs-filter').value = '';
   logsPaused = false;
+  logsFilter = '';
 
   const output = document.getElementById('logs-output');
   output.innerHTML = '<div class="logs-placeholder">Connecting...</div>';
@@ -303,6 +316,10 @@ function openLogs(containerId, containerName) {
     if (logsPaused) return;
     const line = document.createElement('div');
     line.textContent = e.data;
+    line.dataset.text = e.data;
+    if (logsFilter && !e.data.toLowerCase().includes(logsFilter)) {
+      line.style.display = 'none';
+    }
     output.appendChild(line);
     output.scrollTop = output.scrollHeight;
   };
