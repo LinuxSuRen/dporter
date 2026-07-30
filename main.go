@@ -92,6 +92,7 @@ func main() {
 		mux.HandleFunc("GET /api/compose/{project}/file", srv.handleComposeFileContent)
 		mux.HandleFunc("GET /api/volumes", srv.handleVolumes)
 		mux.HandleFunc("GET /api/volumes/{name}", srv.handleVolumeDetail)
+		mux.HandleFunc("DELETE /api/volumes/batch", srv.handleBatchDeleteVolumes)
 		mux.HandleFunc("GET /api/images/info", srv.handleImageInfo)
 		mux.HandleFunc("GET /api/containers", srv.handleContainers)
 		mux.HandleFunc("GET /api/containers/stats", srv.handleContainerStats)

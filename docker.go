@@ -773,6 +773,19 @@ type VolumeDetail struct {
 	ComposeProject string               `json:"composeProject,omitempty"`
 }
 
+func deleteVolume(name string, force bool) error {
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		return fmt.Errorf("failed to connect to docker: %w", err)
+	}
+
+	path := "volumes/" + name
+	if force {
+		path += "?force=true"
+	}
+	return dockerDelete(httpClient, path)
+}
+
 func inspectVolumeWithContainers(name string) (*VolumeDetail, error) {
 	httpClient, _, err := newDockerClient()
 	if err != nil {

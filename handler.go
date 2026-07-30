@@ -1201,6 +1201,35 @@ func (s *Server) handleVolumes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, volumes)
 }
 
+func (s *Server) handleBatchDeleteVolumes(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Names []string `json:"names"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Names) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	var failed []map[string]string
+	for _, name := range req.Names {
+		if err := deleteVolume(name, false); err != nil {
+			failed = append(failed, map[string]string{
+				"name":  name,
+				"error": err.Error(),
+			})
+		}
+	}
+
+	if len(failed) > 0 {
+		writeJSON(w, http.StatusPartialContent, map[string]interface{}{
+			"deleted": len(req.Names) - len(failed),
+			"failed":  failed,
+		})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleVolumeDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
