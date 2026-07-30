@@ -88,6 +88,8 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 .toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;font-size:0.875rem;color:#fff;z-index:200;animation:slideIn .3s ease}
 .toast-success{background:#059669}
 .toast-error{background:#dc2626}
+.sort-indicator{font-size:0.65rem;margin-left:2px;color:#94a3b8}
+.sort-indicator.active{color:#2563eb}
 @keyframes slideIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
 .hidden{display:none}
 .loading{text-align:center;padding:40px;color:#94a3b8}
@@ -171,6 +173,11 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
       <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="saveSearch();handleSearch()">
       <label style="font-size:0.8rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="show-all-toggle" onchange="toggleShowAll()" style="margin:0">All</label>
       <button type="button" class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
+      <span id="volumes-batch-actions" class="hidden" style="align-items:center;gap:8px;margin-left:4px;padding-left:12px;border-left:1px solid #e2e8f0">
+        <span id="volumes-selected-count" style="font-size:0.8rem;color:#991b1b"></span>
+        <button type="button" class="btn btn-danger btn-sm" onclick="batchDeleteVolumes()">Delete Selected</button>
+        <button type="button" class="btn btn-sm" onclick="clearVolumeSelection()" style="background:#e2e8f0;color:#334155">Clear</button>
+      </span>
     </div>
   </div>
   <div class="card-body" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0">
@@ -188,15 +195,15 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
     <div id="containers-table" class="hidden" style="flex:1;overflow-y:auto;min-height:0">
       <div class="table-wrap">
       <table id="network-table">
-        <thead><tr><th style="width:20%">Name</th><th style="width:28%">Image</th><th style="width:8%">Status</th><th style="width:10%">IPs</th><th style="width:14%">Ports</th><th style="width:80px">Actions</th></tr></thead>
+        <thead><tr><th style="width:20%;cursor:pointer" onclick="sortContainers('name')">Name <span class="sort-indicator" id="csort-name"></span></th><th style="width:28%;cursor:pointer" onclick="sortContainers('image')">Image <span class="sort-indicator" id="csort-image"></span></th><th style="width:8%;cursor:pointer" onclick="sortContainers('state')">Status <span class="sort-indicator" id="csort-state"></span></th><th style="width:10%">IPs</th><th style="width:14%">Ports</th><th style="width:80px">Actions</th></tr></thead>
         <tbody id="containers-tbody"></tbody>
       </table>
       <table id="performance-table" class="hidden">
-        <thead><tr><th style="width:24%">Name</th><th style="width:10%">Status</th><th style="width:18%">CPU</th><th style="width:24%">Memory</th><th style="width:12%">Mem %</th></tr></thead>
+        <thead><tr><th style="width:24%;cursor:pointer" onclick="sortStats('name')">Name <span class="sort-indicator" id="ssort-name"></span></th><th style="width:10%;cursor:pointer" onclick="sortStats('state')">Status <span class="sort-indicator" id="ssort-state"></span></th><th style="width:18%;cursor:pointer" onclick="sortStats('cpu')">CPU <span class="sort-indicator" id="ssort-cpu"></span></th><th style="width:24%;cursor:pointer" onclick="sortStats('memory')">Memory <span class="sort-indicator" id="ssort-memory"></span></th><th style="width:12%;cursor:pointer" onclick="sortStats('memoryPercent')">Mem % <span class="sort-indicator" id="ssort-memoryPercent"></span></th></tr></thead>
         <tbody id="stats-tbody"></tbody>
       </table>
       <table id="volumes-table" class="hidden">
-        <thead><tr><th style="width:26%">Name</th><th style="width:10%">Driver</th><th style="width:30%">Mountpoint</th><th style="width:10%">Scope</th><th style="width:10%">Size</th><th style="width:10%">Containers</th></tr></thead>
+        <thead><tr><th style="width:30px"><input type="checkbox" id="volumes-select-all" onchange="toggleSelectAllVolumes()" title="Select all"></th><th style="width:26%;cursor:pointer" onclick="sortVolumes('name')">Name <span class="sort-indicator" id="sort-name"></span></th><th style="width:10%;cursor:pointer" onclick="sortVolumes('driver')">Driver <span class="sort-indicator" id="sort-driver"></span></th><th style="width:28%;cursor:pointer" onclick="sortVolumes('mountpoint')">Mountpoint <span class="sort-indicator" id="sort-mountpoint"></span></th><th style="width:10%;cursor:pointer" onclick="sortVolumes('scope')">Scope <span class="sort-indicator" id="sort-scope"></span></th><th style="width:10%;cursor:pointer" onclick="sortVolumes('size')">Size <span class="sort-indicator" id="sort-size"></span></th><th style="width:10%;cursor:pointer" onclick="sortVolumes('containers')">Containers <span class="sort-indicator" id="sort-containers"></span></th></tr></thead>
         <tbody id="volumes-tbody"></tbody>
       </table>
       </div>
