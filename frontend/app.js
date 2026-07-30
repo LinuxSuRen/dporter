@@ -3,10 +3,14 @@ const state = {
   forwards: [],
   stats: [],
   volumes: [],
+  selectedVolumes: new Set(),
   modalTarget: null,
   showAll: false,
   composeFilter: [],
   currentView: 'network',
+  volumeSort: { field: null, asc: true },
+  containerSort: { field: null, asc: true },
+  statsSort: { field: null, asc: true },
 };
 
 function logout() {
@@ -82,6 +86,18 @@ function renderContainers() {
 
   renderComposeTags(filtered.length);
 
+  if (state.containerSort.field) {
+    const field = state.containerSort.field;
+    const asc = state.containerSort.asc ? 1 : -1;
+    filtered.sort((a, b) => {
+      const va = (a[field] || '').toLowerCase();
+      const vb = (b[field] || '').toLowerCase();
+      if (va < vb) return -1 * asc;
+      if (va > vb) return 1 * asc;
+      return 0;
+    });
+  }
+
   const tbody = document.getElementById('containers-tbody');
   if (filtered.length === 0 && search) {
     tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:32px">No containers matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
@@ -147,6 +163,7 @@ function renderContainers() {
       <td><div class="action-btns">${forwardBtn}${moreMenu}</div></td>
     </tr>`;
   }).join('');
+  updateContainerSortIndicators();
 }
 
 function openForwardModal(idx) {
@@ -954,6 +971,10 @@ function switchView(view) {
     document.getElementById('volumes-table').classList.remove('hidden');
     document.getElementById('compose-tags').classList.add('hidden');
     refreshVolumes();
+  } else {
+    const batchBar = document.getElementById('volumes-batch-actions');
+    batchBar.classList.add('hidden');
+    batchBar.style.display = 'none';
   }
 }
 
@@ -1028,9 +1049,26 @@ function renderStats() {
 
   renderComposeTags(filtered.length);
 
+  if (state.statsSort.field) {
+    const field = state.statsSort.field;
+    const asc = state.statsSort.asc ? 1 : -1;
+    filtered.sort((a, b) => {
+      let va, vb;
+      if (field === 'cpu') { va = a.cpuPercent; vb = b.cpuPercent; }
+      else if (field === 'memory') { va = a.memoryUsage; vb = b.memoryUsage; }
+      else if (field === 'memoryPercent') { va = a.memoryPercent; vb = b.memoryPercent; }
+      else { va = (a[field] || '').toLowerCase(); vb = (b[field] || '').toLowerCase(); }
+
+      if (va < vb) return -1 * asc;
+      if (va > vb) return 1 * asc;
+      return 0;
+    });
+  }
+
   const tbody = document.getElementById('stats-tbody');
   if (filtered.length === 0 && search) {
     tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:32px">No containers matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
+    updateStatsSortIndicators();
     return;
   }
   tbody.innerHTML = filtered.map((s) => {
@@ -1054,6 +1092,7 @@ function renderStats() {
       <td class="stats-cell">${memPct}</td>
     </tr>`;
   }).join('');
+  updateStatsSortIndicators();
 }
 
 async function showVolumeDetail(name) {
@@ -1126,6 +1165,162 @@ function closeVolumeDetail() {
   document.getElementById('volume-detail-modal').classList.add('hidden');
 }
 
+function toggleVolumeSelection(name, checked) {
+  if (checked) {
+    state.selectedVolumes.add(name);
+  } else {
+    state.selectedVolumes.delete(name);
+  }
+  updateVolumeBatchBar();
+  document.getElementById('volumes-select-all').checked =
+    state.selectedVolumes.size > 0 && state.selectedVolumes.size === state.volumes.filter(v => {
+      const search = (document.getElementById('containers-search').value || '').toLowerCase();
+      return !search || v.name.toLowerCase().includes(search)
+        || v.driver.toLowerCase().includes(search)
+        || v.mountpoint.toLowerCase().includes(search);
+    }).length;
+}
+
+function toggleSelectAllVolumes() {
+  const checked = document.getElementById('volumes-select-all').checked;
+  const search = (document.getElementById('containers-search').value || '').toLowerCase();
+  const visible = state.volumes.filter(v => {
+    if (!search) return true;
+    return v.name.toLowerCase().includes(search)
+      || v.driver.toLowerCase().includes(search)
+      || v.mountpoint.toLowerCase().includes(search);
+  });
+
+  if (checked) {
+    visible.forEach(v => state.selectedVolumes.add(v.name));
+  } else {
+    visible.forEach(v => state.selectedVolumes.delete(v.name));
+  }
+
+  renderVolumes();
+}
+
+function updateVolumeBatchBar() {
+  const bar = document.getElementById('volumes-batch-actions');
+  const count = document.getElementById('volumes-selected-count');
+  if (state.selectedVolumes.size > 0) {
+    bar.classList.remove('hidden');
+    bar.style.display = 'inline-flex';
+    count.textContent = `${state.selectedVolumes.size} volume(s) selected`;
+  } else {
+    bar.classList.add('hidden');
+    bar.style.display = 'none';
+  }
+}
+
+function clearVolumeSelection() {
+  state.selectedVolumes.clear();
+  document.getElementById('volumes-select-all').checked = false;
+  renderVolumes();
+}
+
+function sortVolumes(field) {
+  if (state.volumeSort.field === field) {
+    state.volumeSort.asc = !state.volumeSort.asc;
+  } else {
+    state.volumeSort.field = field;
+    state.volumeSort.asc = true;
+  }
+  renderVolumes();
+  updateSortIndicators();
+}
+
+function updateSortIndicators() {
+  ['name', 'driver', 'mountpoint', 'scope', 'size', 'containers'].forEach(f => {
+    const el = document.getElementById('sort-' + f);
+    if (!el) return;
+    if (state.volumeSort.field === f) {
+      el.className = 'sort-indicator active';
+      el.textContent = state.volumeSort.asc ? ' ▲' : ' ▼';
+    } else {
+      el.className = 'sort-indicator';
+      el.textContent = '';
+    }
+  });
+}
+
+function sortContainers(field) {
+  if (state.containerSort.field === field) {
+    state.containerSort.asc = !state.containerSort.asc;
+  } else {
+    state.containerSort.field = field;
+    state.containerSort.asc = true;
+  }
+  renderContainers();
+  updateContainerSortIndicators();
+}
+
+function updateContainerSortIndicators() {
+  ['name', 'image', 'state'].forEach(f => {
+    const el = document.getElementById('csort-' + f);
+    if (!el) return;
+    if (state.containerSort.field === f) {
+      el.className = 'sort-indicator active';
+      el.textContent = state.containerSort.asc ? ' ▲' : ' ▼';
+    } else {
+      el.className = 'sort-indicator';
+      el.textContent = '';
+    }
+  });
+}
+
+function sortStats(field) {
+  if (state.statsSort.field === field) {
+    state.statsSort.asc = !state.statsSort.asc;
+  } else {
+    state.statsSort.field = field;
+    state.statsSort.asc = true;
+  }
+  renderStats();
+  updateStatsSortIndicators();
+}
+
+function updateStatsSortIndicators() {
+  ['name', 'state', 'cpu', 'memory', 'memoryPercent'].forEach(f => {
+    const el = document.getElementById('ssort-' + f);
+    if (!el) return;
+    if (state.statsSort.field === f) {
+      el.className = 'sort-indicator active';
+      el.textContent = state.statsSort.asc ? ' ▲' : ' ▼';
+    } else {
+      el.className = 'sort-indicator';
+      el.textContent = '';
+    }
+  });
+}
+
+async function batchDeleteVolumes() {
+  const names = Array.from(state.selectedVolumes);
+  if (!names.length) return;
+  if (!confirm(`Delete ${names.length} volume(s)? This action cannot be undone.`)) return;
+
+  try {
+    const res = await fetch('/api/volumes/batch', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names }),
+    });
+    if (res.status === 204) {
+      showToast(`Deleted ${names.length} volume(s)`);
+      state.selectedVolumes.clear();
+      refreshVolumes();
+    } else {
+      const data = await res.json();
+      const failedNames = (data.failed || []).map(f => f.name).join(', ');
+      showToast(`Deleted ${data.deleted}, failed: ${failedNames || 'none'}`, 'error');
+      state.selectedVolumes.clear();
+      refreshVolumes();
+    }
+  } catch (err) {
+    showToast(`Failed to delete volumes: ${err.message}`, 'error');
+  }
+}
+
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1185,9 +1380,25 @@ function renderVolumes() {
     filtered.some(v => v.composeProject === p)
   );
 
+  if (state.volumeSort.field) {
+    const field = state.volumeSort.field;
+    const asc = state.volumeSort.asc ? 1 : -1;
+    const sortFn = (a, b) => {
+      let va, vb;
+      if (field === 'size') { va = a.sizeBytes; vb = b.sizeBytes; }
+      else if (field === 'containers') { va = a.refCount; vb = b.refCount; }
+      else { va = (a[field] || '').toLowerCase(); vb = (b[field] || '').toLowerCase(); }
+
+      if (va < vb) return -1 * asc;
+      if (va > vb) return 1 * asc;
+      return 0;
+    };
+    filtered.sort(sortFn);
+  }
+
   const tbody = document.getElementById('volumes-tbody');
   if (filtered.length === 0 && search) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:32px">No volumes matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:32px">No volumes matching &ldquo;${escapeHtml(search)}&rdquo;</td></tr>`;
     return;
   }
   tbody.innerHTML = filtered.map((v) => {
@@ -1198,16 +1409,21 @@ function renderVolumes() {
       : '';
     const displayName = v.name.length > 30 ? v.name.substring(0, 12) : v.name;
     const nameTitle = v.name.length > 30 ? ` title="${escapeHtml(v.name)}"` : '';
+    const checked = state.selectedVolumes.has(v.name) ? ' checked' : '';
 
-    return `<tr onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer">
-      <td><strong${nameTitle}>${escapeHtml(displayName)}</strong>${composeBadge}</td>
-      <td>${escapeHtml(v.driver)}</td>
-      <td><span style="font-family:monospace;font-size:0.75rem;word-break:break-all">${escapeHtml(v.mountpoint)}</span></td>
-      <td>${escapeHtml(v.scope)}</td>
-      <td>${sizeText}</td>
-      <td>${refText}</td>
+    return `<tr>
+      <td style="cursor:default" onclick="event.stopPropagation()"><input type="checkbox" class="volume-checkbox" value="${escapeHtml(v.name)}"${checked} onchange="toggleVolumeSelection('${escapeHtml(v.name)}', this.checked)"></td>
+      <td onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer"><strong${nameTitle}>${escapeHtml(displayName)}</strong>${composeBadge}</td>
+      <td onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer">${escapeHtml(v.driver)}</td>
+      <td onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer"><span style="font-family:monospace;font-size:0.75rem;word-break:break-all">${escapeHtml(v.mountpoint)}</span></td>
+      <td onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer">${escapeHtml(v.scope)}</td>
+      <td onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer">${sizeText}</td>
+      <td onclick="showVolumeDetail('${escapeHtml(v.name)}')" style="cursor:pointer">${refText}</td>
     </tr>`;
   }).join('');
+
+  updateVolumeBatchBar();
+  updateSortIndicators();
 }
 
 document.addEventListener('click', (e) => {
