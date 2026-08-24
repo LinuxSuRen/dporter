@@ -448,6 +448,125 @@ function clearLogs() {
   document.getElementById('logs-output').innerHTML = '';
 }
 
+let logSearchBusy = false;
+
+function openLogSearch(prefillContainer) {
+  document.getElementById('log-search-modal').classList.remove('hidden');
+  const containerInput = document.getElementById('log-search-container');
+  if (prefillContainer) {
+    containerInput.value = prefillContainer;
+  }
+  document.getElementById('log-search-keyword').focus();
+}
+
+function closeLogSearch() {
+  document.getElementById('log-search-modal').classList.add('hidden');
+}
+
+async function runLogSearch() {
+  const keyword = (document.getElementById('log-search-keyword').value || '').trim();
+  const container = (document.getElementById('log-search-container').value || '').trim();
+  const tail = parseInt(document.getElementById('log-search-tail').value, 10) || 1000;
+  const resultsEl = document.getElementById('log-search-results');
+  const metaEl = document.getElementById('log-search-meta');
+  const errEl = document.getElementById('log-search-error');
+  const btn = document.getElementById('log-search-btn');
+
+  errEl.classList.add('hidden');
+  errEl.textContent = '';
+
+  if (!keyword) {
+    errEl.textContent = 'Please input a keyword.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  if (logSearchBusy) return;
+  logSearchBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Searching...';
+  metaEl.textContent = 'Searching...';
+  metaEl.classList.remove('hidden');
+  resultsEl.classList.add('hidden');
+  resultsEl.innerHTML = '';
+
+  try {
+    const params = new URLSearchParams({ keyword, tail: String(tail) });
+    if (container) params.set('container', container);
+    const data = await api(`/api/logs/search?${params.toString()}`);
+    renderLogSearchResults(data, resultsEl, metaEl);
+  } catch (err) {
+    metaEl.classList.add('hidden');
+    errEl.textContent = `Search failed: ${err.message}`;
+    errEl.classList.remove('hidden');
+  } finally {
+    logSearchBusy = false;
+    btn.disabled = false;
+    btn.textContent = 'Search';
+  }
+}
+
+function renderLogSearchResults(data, resultsEl, metaEl) {
+  resultsEl.innerHTML = '';
+
+  const totalMatches = (data.results || []).reduce((sum, g) => sum + g.matches.length, 0);
+  const scope = data.container ? `container "${data.container}"` : 'all containers';
+  metaEl.textContent = `${totalMatches} match(es) in ${(data.results || []).length} container(s), scanned ${data.scanned} container(s) (${scope}, last ${data.tail} lines each)`;
+  metaEl.classList.remove('hidden');
+
+  if ((data.errors || []).length > 0) {
+    const errNote = document.createElement('div');
+    errNote.className = 'log-search-error';
+    errNote.style.background = 'transparent';
+    errNote.textContent = `Some containers could not be read: ${data.errors.join('; ')}`;
+    resultsEl.appendChild(errNote);
+  }
+
+  if (!data.results || data.results.length === 0) {
+    return;
+  }
+
+  for (const group of data.results) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'log-search-group';
+
+    const header = document.createElement('div');
+    header.className = 'log-search-group-header';
+    header.title = 'Click to open live logs of this container';
+    header.addEventListener('click', () => openLogs(group.id, group.name));
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = group.name;
+
+    const count = document.createElement('span');
+    count.className = 'log-search-group-count';
+    count.textContent = group.matches.length;
+
+    header.appendChild(nameSpan);
+    header.appendChild(count);
+
+    if (group.truncated) {
+      const trunc = document.createElement('span');
+      trunc.className = 'log-search-truncated';
+      trunc.textContent = 'truncated';
+      header.appendChild(trunc);
+    }
+
+    groupEl.appendChild(header);
+
+    for (const m of group.matches) {
+      const line = document.createElement('div');
+      line.className = 'log-search-line' + (m.stream === 'stderr' ? ' stderr' : '');
+      line.textContent = m.text;
+      groupEl.appendChild(line);
+    }
+
+    resultsEl.appendChild(groupEl);
+  }
+
+  resultsEl.classList.remove('hidden');
+}
+
 async function openInspect(containerId, containerName) {
   document.getElementById('inspect-content').classList.add('hidden');
   document.getElementById('inspect-loading').classList.remove('hidden');

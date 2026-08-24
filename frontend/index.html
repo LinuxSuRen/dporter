@@ -131,6 +131,21 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
 .stats-mem{color:#475569;font-size:0.7rem}
 .compose-file-content{background:#0d1117;color:#c9d1d9;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.75rem;line-height:1.5;padding:16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow-y:auto}
 .compose-file-path{font-family:'SF Mono',Monaco,monospace;font-size:0.75rem;color:#475569;margin-bottom:8px;padding:4px 8px;background:#f1f5f9;border-radius:4px;word-break:break-all}
+.log-search-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.log-search-bar input{padding:6px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.8rem;outline:none}
+.log-search-bar input:focus{border-color:#4a6cf7;box-shadow:0 0 0 3px rgba(74,108,247,.15)}
+#log-search-keyword{flex:1;min-width:140px}
+#log-search-container{width:180px}
+#log-search-tail{width:90px}
+.log-search-results{background:#0d1117;color:#c9d1d9;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;font-size:0.75rem;line-height:1.5;border-radius:6px;padding:8px 12px;max-height:55vh;overflow-y:auto}
+.log-search-group{margin-bottom:10px}
+.log-search-group-header{display:flex;align-items:center;gap:8px;padding:4px 0;color:#f0f6fc;font-weight:600;position:sticky;top:0;background:#0d1117;border-bottom:1px solid #21262d;cursor:pointer}
+.log-search-group-count{background:#1f6feb;color:#fff;border-radius:10px;font-size:0.65rem;padding:1px 8px;font-weight:500}
+.log-search-truncated{color:#d29922;font-size:0.65rem}
+.log-search-line{white-space:pre-wrap;word-break:break-all;padding:1px 0}
+.log-search-line.stderr{color:#f85149}
+.log-search-meta{color:#8b949e;font-size:0.75rem;padding:24px 0;text-align:center}
+.log-search-error{color:#f85149;font-size:0.75rem;margin-top:8px}
 </style>
 </head>
 <body>
@@ -171,6 +186,7 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
         <button type="button" id="view-volumes" onclick="switchView('volumes')">Volumes</button>
       </div>
       <input type="text" id="containers-search" class="search-input" placeholder="Search containers..." oninput="saveSearch();handleSearch()">
+      <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#334155" onclick="openLogSearch()">&#128269; Log Search</button>
       <label style="font-size:0.8rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="show-all-toggle" onchange="toggleShowAll()" style="margin:0">All</label>
       <button type="button" class="btn btn-primary btn-sm" onclick="refreshContainers()">&olarr; Refresh</button>
       <span id="volumes-batch-actions" class="hidden" style="align-items:center;gap:8px;margin-left:4px;padding-left:12px;border-left:1px solid #e2e8f0">
@@ -317,6 +333,27 @@ td .port-tag.unmapped{background:#fefce8;color:#ca8a04}
     </div>
     <div class="modal-footer">
       <button type="button" class="btn" onclick="closeComposeFile()" style="background:#f1f5f9;color:#475569">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="log-search-modal">
+  <div class="modal modal-wide">
+    <div class="modal-header">Global Log Search</div>
+    <div class="modal-body">
+      <div class="log-search-bar">
+        <input type="text" id="log-search-keyword" placeholder="Keyword (fuzzy match)..." onkeydown="if(event.key==='Enter')runLogSearch()">
+        <input type="text" id="log-search-container" placeholder="Container (optional)" title="Module parameter: container name / compose service / ID prefix. Empty = search all containers" onkeydown="if(event.key==='Enter')runLogSearch()">
+        <input type="number" id="log-search-tail" value="1000" min="10" max="10000" title="Recent lines to scan per container" onkeydown="if(event.key==='Enter')runLogSearch()">
+        <button type="button" class="btn btn-primary btn-sm" id="log-search-btn" onclick="runLogSearch()">Search</button>
+      </div>
+      <div class="hint" style="margin-bottom:10px">Case-insensitive fuzzy match over the last N log lines of each container. Leave the container field empty to search globally.</div>
+      <div class="log-search-results hidden" id="log-search-results"></div>
+      <div class="log-search-meta hidden" id="log-search-meta"></div>
+      <div class="log-search-error hidden" id="log-search-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick="closeLogSearch()" style="background:#f1f5f9;color:#475569">Close</button>
     </div>
   </div>
 </div>

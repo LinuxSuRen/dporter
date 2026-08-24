@@ -13,6 +13,7 @@ Docker 容器管理面板 —— 集容器运维、Web 终端、端口转发于�
 ### Web 终端
 - **交互式 Shell** —— 通过 WebSocket 进入容器内部 `/bin/sh`，基于 xterm.js
 - **日志流** —— WebSocket 实时查看容器日志（跟随模式）
+- **全局日志搜索** —— 跨容器模糊搜索日志，可选容器名（模块参数）缩小范围，留空即全局搜索
 - 支持 xterm-256color，完整的终端体验
 
 ### 端口转发
@@ -126,6 +127,23 @@ POST /api/forwards
 ```
 
 `containerId` 支持容器 ID 前缀、完整 ID 或容器名称。`localPort` 省略时默认使用 `containerPort`。
+
+### 日志
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/logs/search?keyword=xxx` | 全局模糊搜索所有容器日志 |
+| `GET` | `/api/logs/search?keyword=xxx&container=nginx` | 按容器名（模块参数）过滤搜索 |
+| `GET` | `/api/containers/{id}/logs` | WebSocket 实时日志流 |
+
+参数说明：
+
+- `keyword`（必填）—— 关键字，大小写不敏感的模糊（子串）匹配
+- `container`（可选）—— 模块参数，即容器名称；同时支持 compose service 名称、容器 ID 前缀的模糊匹配。**省略该参数时搜索全部容器**
+- `tail`（可选）—— 每个容器扫描最近的日志行数，默认 `1000`，最大 `10000`
+- `limit`（可选）—— 每个容器最多返回的匹配条数，默认 `100`
+
+返回结果按容器分组，每条匹配标记 `stdout`/`stderr` 流来源。
 
 ### Compose
 

@@ -94,6 +94,7 @@ func main() {
 		mux.HandleFunc("GET /api/volumes/{name}", srv.handleVolumeDetail)
 		mux.HandleFunc("DELETE /api/volumes/batch", srv.handleBatchDeleteVolumes)
 		mux.HandleFunc("GET /api/images/info", srv.handleImageInfo)
+		mux.HandleFunc("GET /api/logs/search", srv.handleLogsSearch)
 		mux.HandleFunc("GET /api/containers", srv.handleContainers)
 		mux.HandleFunc("GET /api/containers/stats", srv.handleContainerStats)
 		mux.HandleFunc("GET /api/containers/stats/stream", srv.handleContainerStatsSSE)
