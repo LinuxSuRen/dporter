@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -27,16 +28,16 @@ type ContainerPortInfo struct {
 }
 
 type ContainerInfo struct {
-	ID                string              `json:"id"`
-	Name              string              `json:"name"`
-	Image             string              `json:"image"`
-	State             string              `json:"state"`
-	NetworkIPs        map[string]string   `json:"networkIps"`
-	Ports             []ContainerPortInfo `json:"ports"`
-	ComposeProject    string              `json:"composeProject,omitempty"`
-	ComposeConfigFiles string             `json:"composeConfigFiles,omitempty"`
-	ComposeWorkingDir string              `json:"composeWorkingDir,omitempty"`
-	ComposeService    string              `json:"composeService,omitempty"`
+	ID                 string              `json:"id"`
+	Name               string              `json:"name"`
+	Image              string              `json:"image"`
+	State              string              `json:"state"`
+	NetworkIPs         map[string]string   `json:"networkIps"`
+	Ports              []ContainerPortInfo `json:"ports"`
+	ComposeProject     string              `json:"composeProject,omitempty"`
+	ComposeConfigFiles string              `json:"composeConfigFiles,omitempty"`
+	ComposeWorkingDir  string              `json:"composeWorkingDir,omitempty"`
+	ComposeService     string              `json:"composeService,omitempty"`
 }
 
 type containerSummary struct {
@@ -237,7 +238,7 @@ func getRegistryAuth(image string) string {
 		return ""
 	}
 	var cfg struct {
-		Auths       map[string]struct {
+		Auths map[string]struct {
 			Auth string `json:"auth"`
 		} `json:"auths"`
 		CredsStore  string            `json:"credsStore"`
@@ -541,6 +542,126 @@ func streamContainerLogs(w io.Writer, containerID string, tail int) error {
 		}
 		if _, err := w.Write(buf); err != nil {
 			return err
+		}
+	}
+}
+
+// LogMatch is a single log line that matched a keyword search.
+type LogMatch struct {
+	Stream string `json:"stream"` // stdout | stderr
+	Text   string `json:"text"`
+}
+
+// ContainerLogMatches holds keyword matches for one container.
+type ContainerLogMatches struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Matches   []LogMatch `json:"matches"`
+	Truncated bool       `json:"truncated,omitempty"`
+}
+
+// searchContainerLogs scans the last `tail` log lines of one container and
+// returns lines containing keyword (case-insensitive substring match), up to
+// `limit` matches. It does not follow the stream.
+func searchContainerLogs(httpClient *http.Client, containerID, keyword string, tail, limit int) ([]LogMatch, bool, error) {
+	path := fmt.Sprintf("containers/%s/logs?stdout=1&stderr=1&tail=%d", containerID, tail)
+	body, err := dockerGetStream(httpClient, path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer body.Close()
+
+	lowerKeyword := strings.ToLower(keyword)
+	var matches []LogMatch
+	truncated := false
+
+	tryAdd := func(stream, text string) {
+		if truncated {
+			return
+		}
+		if strings.Contains(strings.ToLower(text), lowerKeyword) {
+			matches = append(matches, LogMatch{Stream: stream, Text: text})
+			if len(matches) >= limit {
+				truncated = true
+			}
+		}
+	}
+
+	// Log lines may span multiple stream frames; buffer bytes per stream and
+	// flush on newline (or when the stream type switches).
+	pending := make([]byte, 0, 4096)
+	pendingStream := "stdout"
+	header := make([]byte, 8)
+
+	readFrames := true
+	for readFrames {
+		if _, err := io.ReadFull(body, header); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break
+			}
+			return matches, truncated, err
+		}
+		stream := "stdout"
+		if header[0] == 2 {
+			stream = "stderr"
+		}
+		size := binary.BigEndian.Uint32(header[4:8])
+		if size == 0 {
+			continue
+		}
+		buf := make([]byte, size)
+		if _, err := io.ReadFull(body, buf); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break
+			}
+			return matches, truncated, err
+		}
+
+		if stream != pendingStream {
+			flushPending(pendingStream, pending, tryAdd)
+			pending = pending[:0]
+			pendingStream = stream
+		}
+		pending = append(pending, buf...)
+
+		// flush complete lines to bound memory
+		for {
+			idx := bytes.IndexByte(pending, '\n')
+			if idx < 0 {
+				break
+			}
+			line := pending[:idx]
+			rest := pending[idx+1:]
+			text := strings.TrimSuffix(string(line), "\r")
+			tryAdd(pendingStream, text)
+			if truncated {
+				return matches, truncated, nil
+			}
+			// move remainder to the front without keeping the consumed prefix
+			pending = append(pending[:0], rest...)
+		}
+	}
+	flushPending(pendingStream, pending, tryAdd)
+	return matches, truncated, nil
+}
+
+func flushPending(stream string, data []byte, add func(stream, text string)) {
+	if len(data) == 0 {
+		return
+	}
+	for len(data) > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		var line []byte
+		if idx >= 0 {
+			line = data[:idx]
+			data = data[idx+1:]
+		} else {
+			line = data
+			data = nil
+		}
+		text := strings.TrimSuffix(string(line), "\r")
+		if text != "" {
+			add(stream, text)
 		}
 	}
 }

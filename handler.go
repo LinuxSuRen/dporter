@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -381,6 +383,128 @@ func (s *Server) handleContainerShell(w http.ResponseWriter, r *http.Request) {
 		log.Printf("exec: %v", err)
 		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[31mError: %v\x1b[0m\r\n", err)))
 	}
+}
+
+// handleLogsSearch implements global fuzzy log search:
+//
+//	GET /api/logs/search?keyword=error&container=nginx&tail=1000&limit=100
+//
+// `keyword` is required and matched case-insensitively as a substring.
+// `container` is the optional module parameter (container name, compose
+// service, or ID prefix); when absent, all containers are searched.
+func (s *Server) handleLogsSearch(w http.ResponseWriter, r *http.Request) {
+	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	if keyword == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing keyword"})
+		return
+	}
+
+	module := strings.TrimSpace(r.URL.Query().Get("container"))
+	tail := 1000
+	if v := r.URL.Query().Get("tail"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 10000 {
+			tail = n
+		}
+	}
+	perContainerLimit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
+			perContainerLimit = n
+		}
+	}
+	const maxTotalMatches = 500
+
+	httpClient, _, err := newDockerClient()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	containers, err := listContainers()
+	if err != nil {
+		log.Printf("logs search: list containers: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Resolve the optional module parameter to target containers
+	// (fuzzy match on name / compose service, exact match on ID prefix).
+	var targets []ContainerInfo
+	if module != "" {
+		lower := strings.ToLower(module)
+		for _, c := range containers {
+			if c.Name == module || c.ID == module || strings.HasPrefix(c.ID, module) ||
+				strings.Contains(strings.ToLower(c.Name), lower) ||
+				strings.Contains(strings.ToLower(c.ComposeService), lower) {
+				targets = append(targets, c)
+			}
+		}
+		if len(targets) == 0 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no container matches " + module})
+			return
+		}
+	} else {
+		targets = containers
+	}
+
+	type searchResult struct {
+		container ContainerInfo
+		matches   []LogMatch
+		truncated bool
+		err       error
+	}
+	ch := make(chan searchResult, len(targets))
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+
+	for _, c := range targets {
+		wg.Add(1)
+		go func(c ContainerInfo) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			m, tr, err := searchContainerLogs(httpClient, c.ID, keyword, tail, perContainerLimit)
+			ch <- searchResult{container: c, matches: m, truncated: tr, err: err}
+		}(c)
+	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	results := make([]ContainerLogMatches, 0)
+	var searchErrs []string
+	totalMatches := 0
+	for res := range ch {
+		if res.err != nil {
+			searchErrs = append(searchErrs, fmt.Sprintf("%s: %v", res.container.Name, res.err))
+			continue
+		}
+		if len(res.matches) == 0 {
+			continue
+		}
+		results = append(results, ContainerLogMatches{
+			ID:        res.container.ID,
+			Name:      res.container.Name,
+			Matches:   res.matches,
+			Truncated: res.truncated,
+		})
+		totalMatches += len(res.matches)
+		if totalMatches >= maxTotalMatches {
+			break
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"keyword":   keyword,
+		"container": module,
+		"tail":      tail,
+		"scanned":   len(targets),
+		"results":   results,
+		"errors":    searchErrs,
+	})
 }
 
 func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) {
